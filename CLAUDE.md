@@ -32,7 +32,7 @@ Read README.md for features and configuration. This file covers conventions and 
 1. ✅ Google Drive storage, chunked uploads, daily backups
 2. Railway (Hobby) with a Dockerfile deploy from GitHub `main` (railway.json: healthcheck /api/health), plus a volume at `/data`; a staging service for testing. Railway bans `VOLUME` in Dockerfiles, so don't add it back.
 3. Cloudflare DNS plus Access (Google login for the team), replacing `APP_PASSWORD`. App side done (server/access.js, users.js; env CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, PUBLIC_URL). Test with scripts/fake-access.mjs (+ CF_ACCESS_CERTS_URL).
-4. Client share links (view/comment) and per-project access
+4. ✅ Roles and per-project access: admin/team/guest (server/users.js), project members as editor/commenter/viewer (store.js), all checks in server/permissions.js, Admin page (#/admin), Share dialog, inactive-guest sweep. Next: public share links (no sign-in) and Figma-style pinned comments.
 5. Later: video compression and thumbnails (ffmpeg), version history, search
 
 ## Branches

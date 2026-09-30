@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, socket, type Session } from './api';
+import { AdminPage } from './components/AdminPage';
 import { BoardView } from './components/BoardView';
 import { Home } from './components/Home';
+import { ShareDialog } from './components/ShareDialog';
 import { Sidebar } from './components/Sidebar';
 import type { BoardSummary, Project } from './types';
 
-type Route = { board: string | null; project: string | null };
+type Route = { board: string | null; project: string | null; admin: boolean };
 
 function useHashRoute() {
   const read = (): Route => ({
     board: location.hash.match(/^#\/b\/([\w-]+)/)?.[1] ?? null,
     project: location.hash.match(/^#\/p\/([\w-]+)/)?.[1] ?? null,
+    admin: location.hash === '#/admin',
   });
   const [route, setRoute] = useState(read);
   useEffect(() => {
@@ -36,6 +39,7 @@ export default function App() {
   const boardId = route.board;
   const [toast, setToast] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 900);
+  const [shareProjectId, setShareProjectId] = useState<string | null>(null);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -49,7 +53,7 @@ export default function App() {
         setSession(s);
         if (s.user) setName(s.user.name); // signed-in accounts carry their own name
       })
-      .catch(() => setSession({ mode: 'open', authRequired: false, authed: true, user: null, publicUrl: '' }));
+      .catch(() => setSession({ mode: 'open', authRequired: false, authed: true, user: null, role: 'team', publicUrl: '' }));
   }, []);
 
   const ready = session?.authed && name;
@@ -121,6 +125,11 @@ export default function App() {
   if (!session.authed) return <Login onDone={() => setSession({ ...session, authed: true })} />;
   if (!name) return <NamePrompt onDone={(n) => { try { localStorage.setItem('rb-name', n); } catch { /* ignore */ } setName(n); }} />;
 
+  const role = session.user?.role || session.role || 'team';
+  const isTeam = role === 'team' || role === 'admin';
+  const isAdmin = role === 'admin';
+  const shareProject = shareProjectId ? projectsById[shareProjectId] : null;
+
   return (
     <div className={`app ${sidebar ? 'with-sidebar' : ''}`}>
       {sidebar && (
@@ -131,6 +140,10 @@ export default function App() {
           currentProject={route.project}
           onOpenProject={goProject}
           onCreateProject={createProject}
+          isTeam={isTeam}
+          isAdmin={isAdmin}
+          adminOpen={route.admin}
+          onOpenAdmin={() => { location.hash = '/admin'; }}
           me={name}
           onOpen={go}
           onCreate={createBoard}
@@ -155,7 +168,15 @@ export default function App() {
         />
       )}
       <main className="main">
-        {boardId ? (
+        {route.admin && isAdmin ? (
+          <AdminPage
+            me={name}
+            notify={notify}
+            onOpenProject={goProject}
+            sidebarOpen={sidebar}
+            toggleSidebar={() => setSidebar((s) => !s)}
+          />
+        ) : boardId ? (
           <BoardView
             key={boardId}
             boardId={boardId}
@@ -165,6 +186,8 @@ export default function App() {
             go={go}
             goProject={goProject}
             notify={notify}
+            isTeam={isTeam}
+            onShare={setShareProjectId}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />
@@ -182,11 +205,16 @@ export default function App() {
             onMove={moveBoard}
             onDelete={deleteBoard}
             notify={notify}
+            isTeam={isTeam}
+            onShare={setShareProjectId}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />
         )}
       </main>
+      {shareProject && isTeam && (
+        <ShareDialog project={shareProject} onClose={() => setShareProjectId(null)} notify={notify} />
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );

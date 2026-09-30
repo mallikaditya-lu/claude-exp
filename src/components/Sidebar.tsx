@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { color } from '../lib';
 import type { BoardSummary, Project } from '../types';
 import { Avatar } from './items/TextCards';
-import { IconBoard, IconChevron, IconFolder, IconHome, IconPlus, IconSearch, IconSidebar } from './icons';
+import { IconBoard, IconChevron, IconFolder, IconHome, IconPlus, IconSearch, IconSidebar, IconUsers } from './icons';
 
 interface Props {
   boards: BoardSummary[];
@@ -16,6 +16,10 @@ interface Props {
   onCreateProject: () => void;
   onRename: () => void;
   onClose: () => void;
+  isTeam: boolean;
+  isAdmin: boolean;
+  adminOpen: boolean;
+  onOpenAdmin: () => void;
   email?: string;
   onSignOut?: () => void;
 }
@@ -23,7 +27,7 @@ interface Props {
 const UNFILED = '__unfiled';
 
 export function Sidebar(props: Props) {
-  const { boards, projects, current, currentProject, me, email, onOpen, onOpenProject, onCreate, onCreateProject, onRename, onClose, onSignOut } = props;
+  const { boards, projects, current, currentProject, me, email, onOpen, onOpenProject, onCreate, onCreateProject, onRename, onClose, onSignOut, isTeam, isAdmin, adminOpen, onOpenAdmin } = props;
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const byId = useMemo(() => Object.fromEntries(boards.map((b) => [b.id, b])), [boards]);
@@ -112,9 +116,14 @@ export function Sidebar(props: Props) {
         <IconSearch size={14} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a board" />
       </div>
-      <button className={`tree-row home-row ${current || currentProject ? '' : 'is-active'}`} onClick={() => onOpen(null)}>
-        <IconHome size={15} /> <span>All boards</span>
+      <button className={`tree-row home-row ${current || currentProject || adminOpen ? '' : 'is-active'}`} onClick={() => onOpen(null)}>
+        <IconHome size={15} /> <span>{isTeam ? 'All boards' : 'Shared with you'}</span>
       </button>
+      {isAdmin && (
+        <button className={`tree-row home-row ${adminOpen ? 'is-active' : ''}`} onClick={onOpenAdmin}>
+          <IconUsers size={15} /> <span>Admin</span>
+        </button>
+      )}
       <div className="tree">
         {matches ? (
           <>
@@ -129,16 +138,20 @@ export function Sidebar(props: Props) {
           <>
             <div className="tree-heading">
               <span>Projects</span>
-              <button className="icon-btn small" title="New project" onClick={onCreateProject}><IconPlus size={14} /></button>
+              {isTeam && <button className="icon-btn small" title="New project" onClick={onCreateProject}><IconPlus size={14} /></button>}
             </div>
             {projects.map((p) =>
               renderGroup(`p:${p.id}`, p.name, color(p.color, 'solid'), () => onOpenProject(p.id), currentProject === p.id))}
-            {!projects.length && <button className="tree-empty link" onClick={onCreateProject}>+ Create your first project</button>}
+            {!projects.length && (isTeam
+              ? <button className="tree-empty link" onClick={onCreateProject}>+ Create your first project</button>
+              : <div className="tree-empty">Nothing shared with you yet</div>)}
             {(children[UNFILED] || []).length > 0 && renderGroup(UNFILED, 'No project', null, () => onOpen(null), false)}
           </>
         )}
       </div>
-      <button className="btn new-board" onClick={() => onCreate(activeProject)}><IconPlus size={15} /> New board</button>
+      {(isTeam || (activeProject && ['edit', 'manage'].includes(projects.find((p) => p.id === activeProject)?.myLevel || ''))) && (
+        <button className="btn new-board" onClick={() => onCreate(activeProject)}><IconPlus size={15} /> New board</button>
+      )}
       <div className="me-row">
         <button className="me" onClick={onRename} title="Change your display name">
           <Avatar name={me} size={24} />

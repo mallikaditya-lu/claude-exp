@@ -66,6 +66,8 @@ export interface Board {
   title: string;
   parentId: string | null;
   projectId?: string | null;
+  /** What the current person can do on this board (sent by the server). */
+  access?: Access;
   /** Canvas background preset key (see BACKGROUNDS in lib.ts). */
   background?: string | null;
   items: Record<string, Item>;
@@ -87,7 +89,22 @@ export interface BoardSummary {
   cover: string | null;
 }
 
-export interface Project { id: string; name: string; color: string; createdAt: number }
+export type Access = 'manage' | 'edit' | 'comment' | 'view';
+export type MemberRole = 'editor' | 'commenter' | 'viewer';
+export type GlobalRole = 'admin' | 'team' | 'guest';
+
+export interface ProjectMember { email: string; role: MemberRole; invitedBy?: string; invitedAt?: number; name?: string | null; lastSeen?: number }
+
+export interface Project {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+  /** What the current person can do in this project. */
+  myLevel?: Access | null;
+  /** Only sent to the core team. */
+  members?: ProjectMember[];
+}
 
 export interface Patch {
   title?: string;
