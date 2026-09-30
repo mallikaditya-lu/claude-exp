@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, socket } from './api';
+import { api, socket, type Session } from './api';
 import { BoardView } from './components/BoardView';
 import { Home } from './components/Home';
 import { Sidebar } from './components/Sidebar';
@@ -28,7 +28,7 @@ function storedName() {
 }
 
 export default function App() {
-  const [session, setSession] = useState<{ authRequired: boolean; authed: boolean } | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [name, setName] = useState(storedName);
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -44,7 +44,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api.session().then(setSession).catch(() => setSession({ authRequired: false, authed: true }));
+    api.session()
+      .then((s) => {
+        setSession(s);
+        if (s.user) setName(s.user.name); // signed-in accounts carry their own name
+      })
+      .catch(() => setSession({ mode: 'open', authRequired: false, authed: true, user: null, publicUrl: '' }));
   }, []);
 
   const ready = session?.authed && name;
@@ -112,6 +117,7 @@ export default function App() {
   }, [boardId, byId, go, notify]);
 
   if (!session) return <div className="splash"><div className="spinner" /></div>;
+  if (!session.authed && session.mode === 'cloudflare') return <SignInElsewhere url={session.publicUrl} />;
   if (!session.authed) return <Login onDone={() => setSession({ ...session, authed: true })} />;
   if (!name) return <NamePrompt onDone={(n) => { try { localStorage.setItem('rb-name', n); } catch { /* ignore */ } setName(n); }} />;
 
@@ -128,9 +134,22 @@ export default function App() {
           me={name}
           onOpen={go}
           onCreate={createBoard}
-          onRename={() => {
+          email={session.user?.email}
+          onSignOut={session.mode === 'cloudflare' ? () => { location.href = '/cdn-cgi/access/logout'; } : undefined}
+          onRename={async () => {
             const n = window.prompt('Your display name', name)?.trim();
-            if (n) { try { localStorage.setItem('rb-name', n); } catch { /* ignore */ } setName(n); }
+            if (!n) return;
+            if (session.user) {
+              try {
+                const u = await api.rename(n);
+                setName(u.name);
+              } catch (err) {
+                notify((err as Error).message);
+              }
+              return;
+            }
+            try { localStorage.setItem('rb-name', n); } catch { /* ignore */ }
+            setName(n);
           }}
           onClose={() => setSidebar(false)}
         />
@@ -169,6 +188,19 @@ export default function App() {
         )}
       </main>
       {toast && <div className="toast" role="status">{toast}</div>}
+    </div>
+  );
+}
+
+function SignInElsewhere({ url }: { url: string }) {
+  return (
+    <div className="gate">
+      <div className="gate-card">
+        <img src="/favicon.svg" width={40} height={40} alt="" />
+        <h1>Sign in to continue</h1>
+        <p>Reference Board uses your company Google account. Open it from its main address to sign in.</p>
+        {url && <a className="btn primary" href={url}>Go to {url.replace(/^https?:\/\//, '')}</a>}
+      </div>
     </div>
   );
 }

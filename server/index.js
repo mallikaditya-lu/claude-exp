@@ -11,6 +11,8 @@ import { seedWelcomeBoard } from './seed.js';
 import { seedDemoProject } from './demo.js';
 import { Drive } from './drive.js';
 import { Files, safeHeaders } from './files.js';
+import { AccessVerifier } from './access.js';
+import { Users } from './users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -20,12 +22,19 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const PASSWORD = process.env.APP_PASSWORD || '';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 500;
 const AUTH_COOKIE = 'rb_auth';
+// Cloudflare Access (per-person Google/email login). When set, it replaces APP_PASSWORD.
+const access = process.env.CF_ACCESS_TEAM_DOMAIN && process.env.CF_ACCESS_AUD
+  ? new AccessVerifier(process.env.CF_ACCESS_TEAM_DOMAIN, process.env.CF_ACCESS_AUD)
+  : null;
+const PUBLIC_URL = process.env.PUBLIC_URL || '';
+const AUTH_MODE = access ? 'cloudflare' : PASSWORD ? 'password' : 'open';
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const TMP_DIR = path.join(DATA_DIR, 'tmp');
 fs.rmSync(TMP_DIR, { recursive: true, force: true });
 fs.mkdirSync(TMP_DIR, { recursive: true });
 const store = new Store(DATA_DIR);
+const users = new Users(DATA_DIR);
 
 // Google Drive storage is used when both variables are set; otherwise files stay on local disk.
 let drive = null;
@@ -64,10 +73,26 @@ function readCookie(req, name) {
   return '';
 }
 
-function isAuthed(req) {
-  if (!PASSWORD) return true;
+function passwordOk(req) {
   const token = readCookie(req, AUTH_COOKIE);
   return token.length === authToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authToken));
+}
+
+/** Who is making this request: { email, name } (Cloudflare), { anon: true } (password/open), or null. */
+async function identify(req) {
+  if (access) {
+    try {
+      const id = await access.verify(AccessVerifier.tokenFrom(req));
+      if (!id) return null;
+      const u = users.touch(id.email);
+      return { email: u.email, name: u.name };
+    } catch (err) {
+      console.error('Access verification error:', err.message);
+      return null;
+    }
+  }
+  if (PASSWORD && !passwordOk(req)) return null;
+  return { anon: true };
 }
 
 // Unauthenticated health check for the host (Railway) to know the app is up.
@@ -75,8 +100,15 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, storage: files.mode, boards: store.boards.size });
 });
 
-app.get('/api/session', (req, res) => {
-  res.json({ authRequired: Boolean(PASSWORD), authed: isAuthed(req) });
+app.get('/api/session', async (req, res) => {
+  const user = await identify(req);
+  res.json({
+    mode: AUTH_MODE,
+    authRequired: AUTH_MODE !== 'open',
+    authed: Boolean(user),
+    user: user?.email ? user : null,
+    publicUrl: PUBLIC_URL,
+  });
 });
 
 app.post('/api/login', (req, res) => {
@@ -90,9 +122,28 @@ app.post('/api/login', (req, res) => {
   res.json({ ok: true });
 });
 
-app.use(['/api', '/uploads'], (req, res, next) => {
-  if (isAuthed(req)) return next();
-  res.status(401).json({ error: 'Not signed in' });
+app.use(['/api', '/uploads'], async (req, res, next) => {
+  const user = await identify(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  req.user = user;
+  next();
+});
+
+// ---------- people ----------
+app.patch('/api/me', (req, res) => {
+  if (!req.user.email) return res.status(400).json({ error: 'Names are set in the browser when not using Cloudflare sign-in' });
+  const u = users.rename(req.user.email, req.body?.name || '');
+  // Update live presence and cursors everywhere this person is connected.
+  const boards = new Set();
+  for (const info of clients.values()) {
+    if (info.email === u.email) { info.name = u.name; if (info.boardId) boards.add(info.boardId); }
+  }
+  boards.forEach(sendPresence);
+  res.json({ email: u.email, name: u.name });
+});
+
+app.get('/api/users', (_req, res) => {
+  res.json(users.list().map(({ email, name, lastSeen }) => ({ email, name, lastSeen })));
 });
 
 // ---------- boards ----------
@@ -282,17 +333,19 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Map(); // ws -> { clientId, name, boardId }
 
-server.on('upgrade', (req, socket, head) => {
-  if (!req.url?.startsWith('/ws') || !isAuthed(req)) {
+server.on('upgrade', async (req, socket, head) => {
+  const user = req.url?.startsWith('/ws') ? await identify(req) : null;
+  if (!user) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws));
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, user));
 });
 
-wss.on('connection', (ws) => {
-  clients.set(ws, { clientId: '', name: '', boardId: null });
+wss.on('connection', (ws, user) => {
+  // With Cloudflare sign-in the name comes from the verified account, not from the browser.
+  clients.set(ws, { clientId: '', name: user?.name || '', email: user?.email || '', boardId: null });
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (raw) => {
@@ -301,7 +354,7 @@ wss.on('connection', (ws) => {
     const info = clients.get(ws);
     if (msg.t === 'hello') {
       info.clientId = String(msg.clientId || '').slice(0, 64);
-      info.name = String(msg.name || 'Someone').slice(0, 60);
+      if (!info.email) info.name = String(msg.name || 'Someone').slice(0, 60);
     } else if (msg.t === 'join') {
       const prev = info.boardId;
       info.boardId = typeof msg.boardId === 'string' ? msg.boardId : null;
@@ -363,5 +416,6 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 server.listen(PORT, () => {
-  console.log(`Reference Board API on http://localhost:${PORT}  (data: ${DATA_DIR}${PASSWORD ? ', password protected' : ''})`);
+  const auth = access ? `, Cloudflare Access (${access.team})` : PASSWORD ? ', password protected' : ', NO LOGIN';
+  console.log(`Reference Board API on http://localhost:${PORT}  (data: ${DATA_DIR}${auth})`);
 });

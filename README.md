@@ -93,11 +93,20 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 | --- | --- | --- |
 | `PORT` | `3001` | HTTP port |
 | `DATA_DIR` | `./data` | Where boards (`boards/*.json`), projects (`projects.json`) and uploads (`uploads/`) are stored. Back up this folder. |
-| `APP_PASSWORD` | *(none)* | Shared team password. **Set this for anything reachable beyond your machine.** |
+| `APP_PASSWORD` | *(none)* | Shared team password. Used only when Cloudflare Access isn't configured. |
+| `CF_ACCESS_TEAM_DOMAIN` | *(none)* | e.g. `littleunusual.cloudflareaccess.com`. With `CF_ACCESS_AUD`, it turns on per-person sign-in through Cloudflare Access. |
+| `CF_ACCESS_AUD` | *(none)* | The Access application's "Application Audience (AUD) Tag" |
+| `PUBLIC_URL` | *(none)* | The site's real address (e.g. `https://refs.littleunusual.co`). People who reach the app another way are sent there to sign in. |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | *(none)* | Full contents of the service account's JSON key. With `GOOGLE_DRIVE_ID`, it turns on Google Drive storage. |
 | `GOOGLE_DRIVE_ID` | *(none)* | ID of the Shared Drive uploads go to |
 | `CACHE_MB` | `2048` | Local cache for small files served from Drive (images, PDFs) |
+
+### Sign-in
+
+- **Cloudflare Access (recommended):** Cloudflare puts a login in front of the site: Google sign-in, or a one-time code by email. Who may enter is set in the Access policy (e.g. everyone `@littleunusual.co` plus specific guest emails). The app verifies Cloudflare's signed token on every request, including WebSockets, so the raw Railway address can't be used to skip the login. Each person gets a profile named after their email, which they can rename from the sidebar.
+- **Shared password:** set `APP_PASSWORD`. Everyone chooses their own display name.
+- **Neither:** open access. Only for local use.
 
 ### Storage: local disk or Google Drive
 
@@ -125,6 +134,8 @@ server/
   index.js      HTTP API, uploads, auth, WebSocket fan-out
   store.js      board + project storage, patch application
   unfurl.js     link previews (SSRF-guarded)
+  access.js     Cloudflare Access token verification
+  users.js      signed-in people and their display names
   seed.js       first-run example board
   demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)
 src/
