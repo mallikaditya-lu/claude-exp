@@ -20,7 +20,7 @@ edits, presence and cursors live.
 | **Board** | A nested board. Double-click to open it; breadcrumbs and the sidebar show the hierarchy. |
 | **Column** | Drag cards in and out to group and order them. |
 | **Image / Video / Audio / File** | Upload via the toolbar, drag files from your desktop, or paste images. Audio gets an inline player, video a native player, and PDFs and other files a download card. |
-| **Line** | Curved arrow (Figma-style) connecting two cards, with an optional label and colour. |
+| **Line** | FigJam-style connector between two cards: elbow, curved or straight, solid or dashed, three thicknesses, any colour, arrows at none/one/both ends, and an optional label. |
 
 ## Projects and backgrounds
 
@@ -32,15 +32,17 @@ edits, presence and cursors live.
 
 - **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick note.
 - **Paste anything:** a URL makes a link card, an image uploads, and plain text makes a note.
-- **Connect:** select a card, then drag the purple dot on its right edge onto another card. Or use the **Line** tool and click two cards.
-- **Move and select:** drag cards, shift-drag on the canvas to box-select, and shift-click to add to a selection.
-- **Navigate:** drag the canvas or scroll to pan. ⌘/Ctrl + scroll or pinch to zoom. ⇧1 fits the board to the screen.
+- **Connect:** select a card and drag any of the four dots (top, right, bottom, left) onto another card. Drop near an edge to attach to that side, or near the middle to let the line pick the best side. The **Line** tool (click two cards) also works.
+- **Edit a line:** click it to open its toolbar (colour, thickness, text, dash, line type, arrows). Drag the end circles to re-attach them to another card or side. On elbow lines, drag the blue handle to move the middle segment; double-click the handle to reset it.
+- **Select (like Figma):** drag on empty canvas to box-select. Shift-drag or shift-click adds to the selection.
+- **Navigate:** hold **Space** and drag, or drag with the **middle mouse button**, to pan. Scrolling with a trackpad or wheel also pans. ⌘/Ctrl + scroll or pinch to zoom. ⇧1 fits the board to the screen.
 - **Resize:** drag the square handle at a selected card's bottom-right corner.
 - **Copy between boards:** ⌘C / ⌘V copies cards, including the lines between them, into any board.
 
 | Shortcut | Action |
 | --- | --- |
 | ⌘Z / ⇧⌘Z | Undo / redo |
+| Space + drag / middle-drag | Pan |
 | ⌘D | Duplicate |
 | ⌘A | Select all |
 | Delete / Backspace | Delete selection |
@@ -101,6 +103,7 @@ src/
   App.tsx       shell, routing (#/b/<id>), login + name prompt
   useBoard.ts   local-first board state, undo/redo, save + live sync
   lib.ts        embeds, colours, diff/patch helpers
+  connectors.ts line routing: sides, elbow/curved/straight paths, arrowheads
   components/
     Canvas.tsx  pan/zoom, drag, columns, lines, clipboard, keyboard
     items/      one component per card type

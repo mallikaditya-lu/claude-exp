@@ -292,11 +292,10 @@ a { color: var(--accent); }
 .world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
 
 .connections { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
-.conn-line { stroke: var(--line); stroke-width: 1.6; fill: none; }
+.conn-line { stroke: var(--line); stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .conn-line.is-temp { stroke: var(--accent); stroke-dasharray: 5 4; }
 .conn-hit { stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: pointer; }
-.conn:hover .conn-line { stroke: var(--text); }
-.conn.is-selected .conn-line { stroke: var(--accent); stroke-width: 2.4; }
+.conn:hover .conn-hit { stroke: color-mix(in srgb, var(--accent) 16%, transparent); }
 .conn-label {
   position: absolute; transform: translate(-50%, -50%); background: var(--canvas); color: var(--muted);
   font-size: 12px; font-weight: 500; padding: 1px 6px; border-radius: 4px; white-space: nowrap; cursor: pointer;
@@ -318,11 +317,48 @@ a { color: var(--accent); }
   background: var(--panel); border: 2px solid var(--accent); cursor: ew-resize; z-index: 2;
 }
 .connect-handle {
-  position: absolute; right: -22px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
-  background: var(--accent); border: 3px solid var(--panel); box-shadow: var(--shadow-sm); cursor: crosshair; z-index: 2;
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--panel); border: 2px solid var(--accent); box-shadow: var(--shadow-sm); cursor: crosshair; z-index: 2;
+  transition: transform 0.1s, background 0.1s;
 }
-.connect-handle:hover { transform: scale(1.2); }
-.in-column .connect-handle { right: -10px; }
+.connect-handle:hover { transform: scale(1.3); background: var(--accent); }
+.connect-handle.is-top { left: 50%; top: -18px; }
+.connect-handle.is-bottom { left: 50%; top: calc(100% + 18px); }
+.connect-handle.is-left { left: -18px; top: 50%; }
+.connect-handle.is-right { left: calc(100% + 18px); top: 50%; }
+.in-column .connect-handle.is-left { left: -9px; }
+.in-column .connect-handle.is-right { left: calc(100% + 9px); }
+
+.conn-end, .conn-bend { position: absolute; z-index: 100001; }
+.canvas.is-dragging .conn-end, .canvas.is-dragging .conn-bend { pointer-events: none; }
+.conn-end {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--accent);
+  cursor: grab; box-shadow: var(--shadow-sm);
+}
+.conn-bend { background: var(--accent); border-radius: 3px; border: 1.5px solid var(--panel); }
+.conn-bend.is-x { width: 8px; height: 26px; cursor: ew-resize; }
+.conn-bend.is-y { width: 26px; height: 8px; cursor: ns-resize; }
+.canvas.is-space, .canvas.is-space * { cursor: grab !important; }
+.canvas.is-space.is-dragging, .canvas.is-space.is-dragging * { cursor: grabbing !important; }
+
+/* connector toolbar */
+.conn-bar { gap: 2px; padding: 4px 6px; }
+.dd { position: relative; }
+.dd-btn {
+  display: inline-flex; align-items: center; gap: 3px; height: 32px; padding: 0 6px; border-radius: 6px; color: var(--muted);
+}
+.dd-btn:hover, .dd-btn.is-open { background: var(--hover); color: var(--text); }
+.dd-swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.15); }
+.dd-menu {
+  position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 60;
+  display: flex; gap: 2px; padding: 5px; border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+}
+.dd-opt { width: 34px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.dd-opt:hover { background: var(--hover); color: var(--text); }
+.dd-opt.is-active { background: var(--accent-soft); color: var(--accent); }
+.dd-swatches { display: grid; grid-template-columns: repeat(5, 22px); gap: 6px; padding: 3px; }
+.dd-swatches .swatch { width: 22px; height: 22px; }
 
 .marquee { position: absolute; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
 

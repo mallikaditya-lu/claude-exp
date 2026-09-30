@@ -36,7 +36,27 @@ export interface Item {
   createdAt?: number;
 }
 
-export interface Connection { id: string; from: string; to: string; label?: string; color?: string }
+export type Side = 'top' | 'right' | 'bottom' | 'left';
+
+export interface Connection {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  color?: string;
+  /** Undefined = 'curved' (boards made before connector styles existed). */
+  shape?: 'elbow' | 'curved' | 'straight';
+  /** Fixed attachment sides; undefined picks the facing sides automatically. */
+  fromSide?: Side;
+  toSide?: Side;
+  /** Elbow only: where the middle segment sits between the two ends (0–1, 0.5 = halfway). */
+  bend?: number;
+  dash?: boolean;
+  /** 1 thin, 2 medium, 3 thick. */
+  weight?: number;
+  /** Undefined = arrow at the end only. */
+  arrow?: 'none' | 'end' | 'both';
+}
 
 export interface Board {
   id: string;

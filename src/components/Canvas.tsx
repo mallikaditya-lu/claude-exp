@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, socket } from '../api';
 import { COLORS, color, isInColumn, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
-import type { Board, BoardSummary, Connection, Item, ItemType, Rect } from '../types';
+import { SIDES, STROKE, route, sideForPoint } from '../connectors';
+import type { Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
+import { ConnectorToolbar } from './ConnectorToolbar';
 import { CanvasContext, type CanvasCtx } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
@@ -65,45 +67,6 @@ function sameRects(a: Record<string, Rect>, b: Record<string, Rect>) {
   return true;
 }
 
-/**
- * Figma-style curved connector between two rects: leaves from the side facing the other card
- * and enters the target's facing side, with tangents perpendicular to those sides.
- */
-function curvePath(a: Rect, b: Rect, gap = 6) {
-  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
-  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-  const dx = bc.x - ac.x;
-  const dy = bc.y - ac.y;
-  // Compare the free space between the boxes on each axis, not just centre distance.
-  const horizontal = Math.abs(dx) - (a.w + b.w) / 2 > Math.abs(dy) - (a.h + b.h) / 2;
-  let p1: { x: number; y: number };
-  let p2: { x: number; y: number };
-  let n1: { x: number; y: number };
-  let n2: { x: number; y: number };
-  if (horizontal) {
-    const s = Math.sign(dx) || 1;
-    p1 = { x: s > 0 ? a.x + a.w + gap : a.x - gap, y: ac.y };
-    p2 = { x: s > 0 ? b.x - gap : b.x + b.w + gap, y: bc.y };
-    n1 = { x: s, y: 0 };
-    n2 = { x: -s, y: 0 };
-  } else {
-    const s = Math.sign(dy) || 1;
-    p1 = { x: ac.x, y: s > 0 ? a.y + a.h + gap : a.y - gap };
-    p2 = { x: bc.x, y: s > 0 ? b.y - gap : b.y + b.h + gap };
-    n1 = { x: 0, y: s };
-    n2 = { x: 0, y: -s };
-  }
-  const k = clamp(Math.hypot(p2.x - p1.x, p2.y - p1.y) * 0.5, 24, 180);
-  const c1 = { x: p1.x + n1.x * k, y: p1.y + n1.y * k };
-  const c2 = { x: p2.x + n2.x * k, y: p2.y + n2.y * k };
-  const r = (v: number) => Math.round(v * 10) / 10;
-  return {
-    d: `M${r(p1.x)} ${r(p1.y)} C${r(c1.x)} ${r(c1.y)} ${r(c2.x)} ${r(c2.y)} ${r(p2.x)} ${r(p2.y)}`,
-    // Point on the curve at t = 0.5, for labels and the line's toolbar.
-    mid: { x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8 },
-  };
-}
-
 function loadView(id: string): View | null {
   try {
     const v = JSON.parse(localStorage.getItem(`rb-view-${id}`) || 'null');
@@ -132,7 +95,11 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
   const [dropTarget, setDropTarget] = useState<{ col: string; index: number } | null>(null);
   const dropRef = useRef(dropTarget);
   const [marquee, setMarquee] = useState<Rect | null>(null);
-  const [linking, setLinking] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [linking, setLinking] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
+  // Dragging one end of a selected line to re-attach it.
+  const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<Record<string, number>>({});
   const [cursors, setCursors] = useState<Record<string, { name: string; x: number; y: number; at: number }>>({});
@@ -334,15 +301,31 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     addItem(tool, at);
   }, [addBoard, addItem]);
 
-  const addConnection = useCallback((from: string, to: string) => {
+  const addConnection = useCallback((from: string, to: string, fromSide?: Side, toSide?: Side) => {
     if (from === to) return;
     const b = getBoard();
     if (!b) return;
     const exists = Object.values(b.connections).some((c) => (c.from === from && c.to === to) || (c.from === to && c.to === from));
     if (exists) return;
-    const conn: Connection = { id: uid(), from, to };
+    const conn: Connection = { id: uid(), from, to, shape: 'elbow' };
+    if (fromSide) conn.fromSide = fromSide;
+    if (toSide) conn.toSide = toSide;
     change((bb) => ({ ...bb, connections: { ...bb.connections, [conn.id]: conn } }));
+    setSelConn(conn.id);
+    setSelection(new Set());
   }, [change, getBoard]);
+
+  const updateConn = useCallback((id: string, partial: Partial<Connection>, key?: string) => {
+    change((b) => (b.connections[id] ? { ...b, connections: { ...b.connections, [id]: { ...b.connections[id], ...partial } } } : b), key);
+  }, [change]);
+
+  /** Card under a screen point, and which of its sides the point is nearest to. */
+  const cardAt = (clientX: number, clientY: number) => {
+    const el = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-item-id]');
+    const id = el?.dataset.itemId;
+    if (!id || !rectsRef.current[id]) return null;
+    return { id, side: sideForPoint(rectsRef.current[id], toWorld(clientX, clientY)) };
+  };
 
   const deleteSelection = useCallback(() => {
     const b = getBoard();
@@ -458,6 +441,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
   const onItemPointerDown = (e: React.PointerEvent, item: Item) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    if (spaceRef.current) { startPan(e); return; }
     const target = e.target as HTMLElement;
     if (lineMode) {
       if (!lineFrom) setLineFrom(item.id);
@@ -587,77 +571,144 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     window.addEventListener('pointerup', onUp);
   };
 
-  const startLinking = (e: React.PointerEvent, item: Item) => {
+  const startLinking = (e: React.PointerEvent, item: Item, side: Side) => {
     e.stopPropagation();
     e.preventDefault();
     const p = toWorld(e.clientX, e.clientY);
-    setLinking({ from: item.id, ...p });
+    setLinking({ from: item.id, side, ...p });
     setDragging(true);
-    const onMove = (ev: PointerEvent) => setLinking({ from: item.id, ...toWorld(ev.clientX, ev.clientY) });
+    const onMove = (ev: PointerEvent) => setLinking({ from: item.id, side, ...toWorld(ev.clientX, ev.clientY) });
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       setLinking(null);
       setDragging(false);
-      const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('[data-item-id]');
-      if (el?.dataset.itemId) addConnection(item.id, el.dataset.itemId);
+      const hit = cardAt(ev.clientX, ev.clientY);
+      if (hit) addConnection(item.id, hit.id, side, hit.side);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
 
-  // ---------- background: pan / marquee ----------
+  const startReattach = (e: React.PointerEvent, c: Connection, end: 'from' | 'to') => {
+    e.stopPropagation();
+    e.preventDefault();
+    setDragging(true);
+    setReattach({ conn: c.id, end, ...toWorld(e.clientX, e.clientY) });
+    const onMove = (ev: PointerEvent) => setReattach({ conn: c.id, end, ...toWorld(ev.clientX, ev.clientY) });
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setReattach(null);
+      setDragging(false);
+      const hit = cardAt(ev.clientX, ev.clientY);
+      const other = end === 'from' ? c.to : c.from;
+      if (!hit || hit.id === other) return;
+      updateConn(c.id, end === 'from'
+        ? { from: hit.id, fromSide: hit.side, bend: undefined }
+        : { to: hit.id, toSide: hit.side, bend: undefined });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const startBend = (e: React.PointerEvent, c: Connection, bend: { axis: 'x' | 'y'; from: number; to: number }) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const key = `bend-${uid()}`;
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      const v = bend.axis === 'x' ? p.x : p.y;
+      updateConn(c.id, { bend: clamp((v - bend.from) / (bend.to - bend.from), -3, 4) }, key);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setDragging(false);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const startPan = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const v0 = viewRef.current;
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => setView({ ...v0, x: v0.x + ev.clientX - sx, y: v0.y + ev.clientY - sy });
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setDragging(false);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  // ---------- background: select / pan ----------
+  // Figma-style: drag selects; middle mouse or space + drag pans (scroll / trackpad also pans).
   const onBgPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button === 1 || (e.button === 0 && spaceRef.current)) { startPan(e); return; }
+    if (e.button !== 0) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
     setEditingId(null);
     setSelConn(null);
     if (lineMode) setLineFrom(null);
     const sx = e.clientX;
     const sy = e.clientY;
+    const start = toWorld(sx, sy);
+    const base = e.shiftKey ? new Set(selection) : new Set<string>();
     let moved = false;
-
-    if (e.shiftKey && e.button === 0) {
-      const start = toWorld(sx, sy);
-      const base = new Set(selection);
-      const onMove = (ev: PointerEvent) => {
-        const p = toWorld(ev.clientX, ev.clientY);
-        const m = { x: Math.min(p.x, start.x), y: Math.min(p.y, start.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
-        setMarquee(m);
-        const b = getBoard()!;
-        const hit = new Set(base);
-        for (const it of Object.values(b.items)) {
-          if (isInColumn(it, b.items)) continue;
-          const r = rectsRef.current[it.id];
-          if (r && r.x < m.x + m.w && r.x + r.w > m.x && r.y < m.y + m.h && r.y + r.h > m.y) hit.add(it.id);
-        }
-        setSelection(hit);
-      };
-      const onUp = () => {
-        setMarquee(null);
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      return;
-    }
-
-    const v0 = viewRef.current;
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
-      if (!moved) { moved = true; setDragging(true); }
-      setView({ ...v0, x: v0.x + ev.clientX - sx, y: v0.y + ev.clientY - sy });
+      moved = true;
+      const p = toWorld(ev.clientX, ev.clientY);
+      const m = { x: Math.min(p.x, start.x), y: Math.min(p.y, start.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      setMarquee(m);
+      const b = getBoard()!;
+      const hit = new Set(base);
+      for (const it of Object.values(b.items)) {
+        if (isInColumn(it, b.items)) continue;
+        const r = rectsRef.current[it.id];
+        if (r && r.x < m.x + m.w && r.x + r.w > m.x && r.y < m.y + m.h && r.y + r.h > m.y) hit.add(it.id);
+      }
+      setSelection(hit);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      setDragging(false);
-      if (!moved) setSelection(new Set());
+      setMarquee(null);
+      if (!moved && !e.shiftKey) setSelection(new Set());
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
+
+  // Hold space to pan.
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      e.preventDefault();
+      if (!spaceRef.current) { spaceRef.current = true; setSpaceHeld(true); }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (!isTyping(e.target)) e.preventDefault();
+      spaceRef.current = false;
+      setSpaceHeld(false);
+    };
+    const reset = () => { spaceRef.current = false; setSpaceHeld(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', reset);
+    };
+  }, []);
 
   const onBgDoubleClick = (e: React.MouseEvent) => {
     if (e.target !== rootRef.current && !(e.target as HTMLElement).classList.contains('world')) return;
@@ -825,9 +876,14 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
         {single && !inColumn && !dragging && (
           <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
         )}
-        {single && !dragging && (
-          <div className="connect-handle" title="Drag onto another card to connect" onPointerDown={(e) => startLinking(e, item)} />
-        )}
+        {single && !dragging && !isEditing && SIDES.map((side) => (
+          <div
+            key={side}
+            className={`connect-handle is-${side}`}
+            title="Drag onto another card to connect"
+            onPointerDown={(e) => startLinking(e, item, side)}
+          />
+        ))}
       </div>
     );
   };
@@ -856,7 +912,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     const cx = ((x0 + x1) / 2) * view.zoom + view.x;
     const top = y0 * view.zoom + view.y;
     const bottom = y1 * view.zoom + view.y;
-    return top > 70 ? { left: cx, top: top - 12, below: false } : { left: cx, top: bottom + 12, below: true };
+    return top > 90 ? { left: cx, top: top - 32, below: false } : { left: cx, top: bottom + 32, below: true };
   })();
 
   const selItems = [...selection].map((id) => items[id]).filter(Boolean);
@@ -870,20 +926,30 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
 
   const conn = selConn ? board.connections[selConn] : null;
   const connectionPaths = Object.values(board.connections).map((c) => {
-    const a = rects[c.from];
-    const b = rects[c.to];
+    let a = rects[c.from];
+    let b = rects[c.to];
+    let shown = c;
+    // While an end is being dragged, draw that end at the pointer.
+    if (reattach?.conn === c.id) {
+      const pt = { x: reattach.x, y: reattach.y, w: 0, h: 0 };
+      if (reattach.end === 'from') { a = pt; shown = { ...c, fromSide: undefined, bend: undefined }; }
+      else { b = pt; shown = { ...c, toSide: undefined, bend: undefined }; }
+    }
     if (!a || !b) return null;
-    return { c, ...curvePath(a, b) };
-  }).filter(Boolean) as { c: Connection; d: string; mid: { x: number; y: number } }[];
+    return { c, r: route(shown, a, b) };
+  }).filter(Boolean) as { c: Connection; r: ReturnType<typeof route> }[];
 
   const selPath = conn ? connectionPaths.find((p) => p.c.id === conn.id) : null;
-  const connMid = selPath ? { x: selPath.mid.x * view.zoom + view.x, y: selPath.mid.y * view.zoom + view.y } : null;
+  const connBar = selPath && !dragging ? (() => {
+    const top = Math.min(selPath.r.start.y, selPath.r.end.y, selPath.r.mid.y);
+    return { x: selPath.r.mid.x * view.zoom + view.x, y: top * view.zoom + view.y - 18 };
+  })() : null;
 
   return (
     <CanvasContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''}`}
+        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${spaceHeld ? 'is-space' : ''}`}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px` }}
         onPointerDown={onBgPointerDown}
         onPointerMove={onPointerMove}
@@ -893,35 +959,41 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
       >
         <div ref={worldRef} className="world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
           <svg className="connections" width="1" height="1">
-            <defs>
-              {['line', 'accent', ...Object.keys(COLORS)].map((k) => (
-                <marker key={k} id={`rb-arrow-${k}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                  <path d="M0 0L10 5L0 10z" style={{ fill: k === 'line' ? 'var(--line)' : k === 'accent' ? 'var(--accent)' : color(k, 'solid') }} />
-                </marker>
-              ))}
-            </defs>
-            {connectionPaths.map(({ c, d }) => (
-              <g key={c.id} className={`conn ${selConn === c.id ? 'is-selected' : ''}`}>
-                <path
-                  className="conn-hit"
-                  d={d}
-                  onPointerDown={(e) => { e.stopPropagation(); setSelConn(c.id); setSelection(new Set()); setEditingId(null); }}
-                />
-                <path
-                  className="conn-line"
-                  d={d}
-                  style={selConn === c.id ? undefined : c.color ? { stroke: color(c.color, 'solid') } : undefined}
-                  markerEnd={`url(#rb-arrow-${selConn === c.id ? 'accent' : c.color || 'line'})`}
-                />
-              </g>
-            ))}
+            {connectionPaths.map(({ c, r }) => {
+              const selected = selConn === c.id;
+              const w = STROKE[c.weight || 1] + (selected ? 0.6 : 0);
+              const stroke = selected ? 'var(--accent)' : c.color ? color(c.color, 'solid') : 'var(--line)';
+              const arrow = c.arrow || 'end';
+              return (
+                <g key={c.id} className={`conn ${selected ? 'is-selected' : ''}`}>
+                  <path
+                    className="conn-hit"
+                    d={r.d}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0 || spaceRef.current) return;
+                      e.stopPropagation();
+                      setSelConn(c.id);
+                      setSelection(new Set());
+                      setEditingId(null);
+                    }}
+                  />
+                  <path className="conn-line" d={r.d} style={{ stroke, strokeWidth: w, strokeDasharray: c.dash ? `${w * 3.5} ${w * 3}` : undefined }} />
+                  {arrow !== 'none' && <path className="conn-line" d={r.endArrow} style={{ stroke, strokeWidth: w }} />}
+                  {arrow === 'both' && <path className="conn-line" d={r.startArrow} style={{ stroke, strokeWidth: w }} />}
+                </g>
+              );
+            })}
             {linking && rects[linking.from] && (() => {
-              const r = rects[linking.from];
-              const { d } = curvePath(r, { x: linking.x, y: linking.y, w: 0, h: 0 }, 2);
-              return <path className="conn-line is-temp" d={d} markerEnd="url(#rb-arrow-accent)" />;
+              const r = route({ shape: 'elbow', fromSide: linking.side }, rects[linking.from], { x: linking.x, y: linking.y, w: 0, h: 0 });
+              return (
+                <g className="conn">
+                  <path className="conn-line is-temp" d={r.d} />
+                  <path className="conn-line is-temp" d={r.endArrow} />
+                </g>
+              );
             })()}
           </svg>
-          {connectionPaths.filter(({ c }) => c.label).map(({ c, mid }) => (
+          {connectionPaths.filter(({ c }) => c.label).map(({ c, r: { mid } }) => (
             <div
               key={c.id}
               className="conn-label"
@@ -932,6 +1004,31 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
             </div>
           ))}
           {free.map((it) => renderCard(it, false))}
+          {selPath && conn && (
+            <>
+              {(['from', 'to'] as const).map((end) => {
+                const p = end === 'from' ? selPath.r.start : selPath.r.end;
+                return (
+                  <div
+                    key={end}
+                    className="conn-end"
+                    title="Drag to another card or side"
+                    style={{ left: p.x, top: p.y, transform: `translate(-50%, -50%) scale(${1 / view.zoom})` }}
+                    onPointerDown={(e) => startReattach(e, conn, end)}
+                  />
+                );
+              })}
+              {selPath.r.bend && !reattach && (
+                <div
+                  className={`conn-bend is-${selPath.r.bend.axis}`}
+                  title="Drag to move this segment"
+                  style={{ left: selPath.r.bend.x, top: selPath.r.bend.y, transform: `translate(-50%, -50%) scale(${1 / view.zoom})` }}
+                  onPointerDown={(e) => startBend(e, conn, selPath.r.bend!)}
+                  onDoubleClick={(e) => { e.stopPropagation(); updateConn(conn.id, { bend: undefined }); }}
+                />
+              )}
+            </>
+          )}
           {marquee && <div className="marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
           {Object.entries(cursors).map(([id, c]) => (
             <div key={id} className="cursor" style={{ transform: `translate(${c.x}px, ${c.y}px) scale(${1 / view.zoom})` }}>
@@ -1027,26 +1124,19 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
           </div>
         )}
 
-        {conn && connMid && (
-          <div className="context-bar" style={{ left: connMid.x, top: connMid.y - 16 }} onPointerDown={(e) => e.stopPropagation()}>
-            <input
-              className="conn-input"
-              placeholder="Add a label"
-              value={conn.label || ''}
-              onChange={(e) => change((b) => ({ ...b, connections: { ...b.connections, [conn.id]: { ...conn, label: e.target.value } } }), `label-${conn.id}`)}
+        {conn && connBar && (
+          <div
+            className="context-bar conn-bar"
+            style={{ left: connBar.x, top: connBar.y }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <ConnectorToolbar
+              key={conn.id}
+              conn={conn}
+              update={(partial, key) => updateConn(conn.id, partial, key)}
+              onDelete={deleteSelection}
             />
-            <div className="swatches">
-              {['default', 'red', 'purple', 'blue', 'green'].map((name) => (
-                <button
-                  key={name}
-                  className="swatch"
-                  title={COLORS[name].label}
-                  style={{ background: name === 'default' ? 'var(--line)' : COLORS[name].solid }}
-                  onClick={() => change((b) => ({ ...b, connections: { ...b.connections, [conn.id]: { ...conn, color: name === 'default' ? undefined : name } } }))}
-                />
-              ))}
-            </div>
-            <button className="icon-btn danger" title="Delete line" onClick={deleteSelection}><IconTrash size={16} /></button>
           </div>
         )}
 

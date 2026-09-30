@@ -14,7 +14,7 @@ export function seedWelcomeBoard(store) {
   };
   const link = (from, to) => {
     const cid = id();
-    connections[cid] = { id: cid, from, to };
+    connections[cid] = { id: cid, from, to, shape: 'elbow' };
   };
 
   const project = store.createProject({ name: 'Example project', color: 'purple' });
