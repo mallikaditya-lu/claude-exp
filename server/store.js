@@ -182,6 +182,39 @@ export class Store {
     return p;
   }
 
+  // ---------- project members (people outside the core team) ----------
+  // project.members: { [email]: { role: 'editor' | 'commenter' | 'viewer', invitedBy, invitedAt } }
+  setMember(projectId, email, role, invitedBy) {
+    const p = this.projects.get(projectId);
+    if (!p) return null;
+    p.members ||= {};
+    const prev = p.members[email];
+    p.members[email] = { role, invitedBy: prev?.invitedBy || invitedBy, invitedAt: prev?.invitedAt || Date.now() };
+    this.saveProjects();
+    return p;
+  }
+
+  removeMember(projectId, email) {
+    const p = this.projects.get(projectId);
+    if (!p?.members?.[email]) return false;
+    delete p.members[email];
+    this.saveProjects();
+    return true;
+  }
+
+  /** Removes someone from every project. Returns the names of the projects they were in. */
+  removeMemberEverywhere(email) {
+    const removed = [];
+    for (const p of this.projects.values()) {
+      if (p.members?.[email]) {
+        delete p.members[email];
+        removed.push(p.name);
+      }
+    }
+    if (removed.length) this.saveProjects();
+    return removed;
+  }
+
   // Deleting a project keeps its boards; they become unfiled.
   deleteProject(id) {
     if (!this.projects.delete(id)) return false;

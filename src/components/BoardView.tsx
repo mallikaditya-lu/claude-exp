@@ -17,11 +17,13 @@ interface Props {
   notify: (msg: string) => void;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
+  isTeam: boolean;
+  onShare: (projectId: string) => void;
 }
 
 const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…', offline: 'Offline — retrying', missing: '' };
 
-export function BoardView({ boardId, boards, projects, me, go, goProject, notify, sidebarOpen, toggleSidebar }: Props) {
+export function BoardView({ boardId, boards, projects, me, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
   const { board, status, presence, change, undo, redo, getBoard } = useBoard(boardId);
   const [title, setTitle] = useState('');
   useEffect(() => { if (board) setTitle(board.title); }, [board?.title]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -40,12 +42,14 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
   const others = presence.filter((p) => p.clientId !== clientId);
   const project = board?.projectId ? projects[board.projectId] : undefined;
   const bg = background(board?.background);
+  const access = board?.access || 'manage';
+  const canEdit = access === 'manage' || access === 'edit';
 
   if (status === 'missing') {
     return (
       <div className="board-missing">
-        <h2>This board doesn’t exist anymore</h2>
-        <p>It may have been deleted by a teammate.</p>
+        <h2>This board isn’t available</h2>
+        <p>It may have been deleted, or your access to it has changed.</p>
         <button className="btn primary" onClick={() => go(null)}>Back to all boards</button>
       </div>
     );
@@ -56,7 +60,7 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
       <header className="topbar">
         {!sidebarOpen && <button className="icon-btn" title="Show sidebar" onClick={toggleSidebar}><IconSidebar size={18} /></button>}
         <nav className="crumbs">
-          <button className="crumb" onClick={() => go(null)}>All boards</button>
+          <button className="crumb" onClick={() => go(null)}>{isTeam ? 'All boards' : 'Shared with you'}</button>
           {project && (
             <span className="crumb-wrap">
               <IconChevron size={12} />
@@ -77,7 +81,7 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
             className="title-input"
             value={title}
             size={Math.max(8, title.length + 1)}
-            disabled={!board}
+            disabled={!board || !canEdit}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => {
               const t = title.trim() || 'Untitled board';
@@ -93,19 +97,26 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
           {others.slice(0, 5).map((p) => <Avatar key={p.clientId} name={p.name} size={28} />)}
           {others.length > 5 && <span className="avatar more">+{others.length - 5}</span>}
         </div>
-        {board && (
+        {!canEdit && board && (
+          <span className="access-pill" title={access === 'comment' ? 'You can view this board and leave comments' : 'You can view this board'}>
+            {access === 'comment' ? 'Can comment' : 'View only'}
+          </span>
+        )}
+        {board && canEdit && (
           <BackgroundPicker
             value={bg.id}
             onChange={(id) => change((b) => ({ ...b, background: id === 'default' ? null : id }))}
           />
         )}
-        <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>
-        <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>
+        {canEdit && <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>}
+        {canEdit && <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>}
         <button
           className="btn primary"
           onClick={() => {
+            // The team can invite people to this board's project; everyone else copies the link.
+            if (isTeam && board?.projectId) { onShare(board.projectId); return; }
             navigator.clipboard?.writeText(location.href).then(
-              () => notify('Board link copied — share it with your team'),
+              () => notify(isTeam ? 'Board link copied. Put the board in a project to invite people outside the team.' : 'Board link copied'),
               () => notify(location.href),
             );
           }}
@@ -129,6 +140,7 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
             me={me}
             openBoard={(id) => go(id)}
             notify={notify}
+            access={access}
           />
         ) : (
           <div className="splash"><div className="spinner" /></div>

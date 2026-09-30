@@ -12,7 +12,8 @@ import { seedDemoProject } from './demo.js';
 import { Drive } from './drive.js';
 import { Files, safeHeaders } from './files.js';
 import { AccessVerifier } from './access.js';
-import { Users } from './users.js';
+import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
+import { Permissions, MEMBER_ROLES, atLeast, stampCommentAuthors } from './permissions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -35,6 +36,7 @@ fs.rmSync(TMP_DIR, { recursive: true, force: true });
 fs.mkdirSync(TMP_DIR, { recursive: true });
 const store = new Store(DATA_DIR);
 const users = new Users(DATA_DIR);
+const perms = new Permissions(store, users);
 
 // Google Drive storage is used when both variables are set; otherwise files stay on local disk.
 let drive = null;
@@ -85,14 +87,14 @@ async function identify(req) {
       const id = await access.verify(AccessVerifier.tokenFrom(req));
       if (!id) return null;
       const u = users.touch(id.email);
-      return { email: u.email, name: u.name };
+      return { email: u.email, name: u.name, role: users.roleOf(u.email) };
     } catch (err) {
       console.error('Access verification error:', err.message);
       return null;
     }
   }
   if (PASSWORD && !passwordOk(req)) return null;
-  return { anon: true };
+  return { anon: true, role: 'team' };
 }
 
 // Unauthenticated health check for the host (Railway) to know the app is up.
@@ -107,6 +109,7 @@ app.get('/api/session', async (req, res) => {
     authRequired: AUTH_MODE !== 'open',
     authed: Boolean(user),
     user: user?.email ? user : null,
+    role: user?.role || null,
     publicUrl: PUBLIC_URL,
   });
 });
@@ -142,61 +145,176 @@ app.patch('/api/me', (req, res) => {
   res.json({ email: u.email, name: u.name });
 });
 
-app.get('/api/users', (_req, res) => {
-  res.json(users.list().map(({ email, name, lastSeen }) => ({ email, name, lastSeen })));
-});
+const isEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+const needTeam = (req, res, next) => (perms.isTeam(req.user) ? next() : res.status(403).json({ error: 'Only the core team can do that' }));
+const needAdmin = (req, res, next) => (perms.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Admins only' }));
 
 // ---------- boards ----------
-app.get('/api/boards', (_req, res) => {
-  res.json(store.list());
+app.get('/api/boards', (req, res) => {
+  res.json(perms.visibleBoards(req.user));
 });
 
 app.post('/api/boards', (req, res) => {
-  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId: req.body?.projectId || null });
+  const parent = req.body?.parentId ? store.get(req.body.parentId) : null;
+  const projectId = parent ? parent.projectId : req.body?.projectId || null;
+  // Team can create anywhere; project editors can create boards inside their project.
+  if (!perms.isTeam(req.user) && !atLeast(perms.projectLevel(req.user, projectId), 'edit')) {
+    return res.status(403).json({ error: 'You can’t create boards here' });
+  }
+  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId });
   broadcastIndex();
   res.status(201).json(board);
 });
 
 // ---------- projects ----------
-app.get('/api/projects', (_req, res) => {
-  res.json(store.listProjects());
+app.get('/api/projects', (req, res) => {
+  res.json(perms.visibleProjects(req.user));
 });
 
-app.post('/api/projects', (req, res) => {
+app.post('/api/projects', needTeam, (req, res) => {
   const project = store.createProject(req.body || {});
   broadcastIndex();
   res.status(201).json(project);
 });
 
-app.patch('/api/projects/:id', (req, res) => {
+app.patch('/api/projects/:id', needTeam, (req, res) => {
   const project = store.updateProject(req.params.id, req.body || {});
   if (!project) return res.status(404).json({ error: 'Project not found' });
   broadcastIndex();
   res.json(project);
 });
 
-app.delete('/api/projects/:id', (req, res) => {
+app.delete('/api/projects/:id', needTeam, (req, res) => {
   if (!store.deleteProject(req.params.id)) return res.status(404).json({ error: 'Project not found' });
   broadcastIndex();
   res.json({ ok: true });
 });
 
+// Invite someone to a project (or change their role there). Team only.
+app.put('/api/projects/:id/members/:email', needTeam, (req, res) => {
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  const role = req.body?.role;
+  if (!isEmail(email)) return res.status(400).json({ error: 'That doesn’t look like an email address' });
+  if (!MEMBER_ROLES.includes(role)) return res.status(400).json({ error: 'Role must be editor, commenter or viewer' });
+  if (users.roleOf(email) !== 'guest') return res.status(400).json({ error: 'That person is on the core team and already has access to every project' });
+  const p = store.setMember(req.params.id, email, role, req.user.email || 'team');
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+  accessChanged();
+  res.json(perms.visibleProjects(req.user).find((x) => x.id === p.id));
+});
+
+app.delete('/api/projects/:id/members/:email', needTeam, (req, res) => {
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  if (!store.removeMember(req.params.id, email)) return res.status(404).json({ error: 'Not a member' });
+  accessChanged();
+  res.json({ ok: true });
+});
+
+// ---------- admin dashboard ----------
+app.get('/api/admin', needAdmin, (_req, res) => {
+  const projects = store.listProjects();
+  const people = users.list().map((u) => ({
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    lastSeen: u.lastSeen,
+    createdAt: u.createdAt,
+    removedForInactivity: u.removedForInactivity || null,
+    projects: projects.filter((p) => p.members?.[u.email]).map((p) => ({ id: p.id, name: p.name, role: p.members[u.email].role })),
+  }));
+  // People invited to projects who haven't signed in yet.
+  for (const p of projects) {
+    for (const [email, m] of Object.entries(p.members || {})) {
+      let row = people.find((x) => x.email === email);
+      if (!row) {
+        row = { email, name: null, role: users.roleOf(email), lastSeen: 0, createdAt: m.invitedAt, pending: true, removedForInactivity: null, projects: [] };
+        people.push(row);
+      }
+      if (row.pending) row.projects.push({ id: p.id, name: p.name, role: m.role });
+    }
+  }
+  people.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  res.json({
+    people,
+    settings: users.settings,
+    adminEmails: ADMIN_EMAILS,
+    teamDomains: TEAM_DOMAINS,
+    stats: {
+      projects: projects.length,
+      boards: store.boards.size,
+      files: Object.keys(files.index.files).length,
+      storage: files.mode,
+      activeLast7Days: people.filter((u) => Date.now() - (u.lastSeen || 0) < 7 * 24 * 3600 * 1000).length,
+    },
+  });
+});
+
+app.patch('/api/admin/people/:email', needAdmin, (req, res) => {
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email' });
+  try {
+    if (!ROLES.includes(req.body?.role)) return res.status(400).json({ error: 'Role must be admin, team or guest' });
+    users.setRole(email, req.body.role);
+    // Team members see everything, so project-level entries become redundant.
+    if (req.body.role !== 'guest') store.removeMemberEverywhere(email);
+    accessChanged();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Remove someone completely: their profile and every project invite.
+app.delete('/api/admin/people/:email', needAdmin, (req, res) => {
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  try {
+    store.removeMemberEverywhere(email);
+    if (users.get(email)) users.remove(email);
+    accessChanged();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/admin/settings', needAdmin, (req, res) => {
+  try {
+    const settings = users.updateSettings(req.body || {});
+    sweepInactive();
+    res.json(settings);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/boards/:id', (req, res) => {
   const board = store.get(req.params.id);
-  if (!board) return res.status(404).json({ error: 'Board not found' });
-  res.json(board);
+  // Same answer for "missing" and "not yours", so board ids can't be probed.
+  if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
+  res.json({ ...board, access: perms.boardLevel(req.user, board) });
 });
 
 app.post('/api/boards/:id/patch', (req, res) => {
-  const result = store.applyPatch(req.params.id, req.body || {});
-  if (!result) return res.status(404).json({ error: 'Board not found' });
+  const board = store.get(req.params.id);
+  const level = perms.boardLevel(req.user, board);
+  if (!board || !level) return res.status(404).json({ error: 'Board not found' });
+  const patch = req.body || {};
+  if (level === 'view') return res.status(403).json({ error: 'You have view-only access to this board' });
+  if (level === 'comment') {
+    const problem = perms.checkCommentPatch(req.user, board, patch);
+    if (problem) return res.status(403).json({ error: problem });
+  }
+  // Moving boards between projects changes who can see them: team only.
+  if (patch.projectId !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can move boards between projects' });
+  stampCommentAuthors(req.user, board, patch);
+  const result = store.applyPatch(req.params.id, patch);
   const origin = String(req.headers['x-client-id'] || '');
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
   scheduleIndexBroadcast();
   res.json({ version: result.board.version });
 });
 
-app.delete('/api/boards/:id', (req, res) => {
+app.delete('/api/boards/:id', needTeam, (req, res) => {
   const board = store.get(req.params.id);
   if (!board) return res.status(404).json({ error: 'Board not found' });
   // Remove any board cards that point at this board from its parent.
@@ -219,21 +337,30 @@ app.delete('/api/boards/:id', (req, res) => {
 // (Cloudflare rejects single requests over 100 MB) and a flaky connection only retries one chunk.
 const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
 const sessions = new Map(); // id -> { path, size, received, name, mime, boardId, at }
+// Files each person uploaded this server run, so they can load them before the card is saved.
+const recentUploads = new Map(); // owner -> Set(url)
 
 app.post('/api/uploads', (req, res) => {
   const size = Number(req.body?.size);
   const name = String(req.body?.name || 'file').slice(0, 200);
   if (!Number.isFinite(size) || size < 0) return res.status(400).json({ error: 'Missing file size' });
   if (size > MAX_UPLOAD) return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_MB} MB` });
+  const target = req.body?.boardId ? store.get(req.body.boardId) : null;
+  if (!perms.isTeam(req.user) && !perms.can(req.user, target, 'edit')) return res.status(403).json({ error: 'You can’t upload to this board' });
   const id = crypto.randomUUID();
   const file = path.join(TMP_DIR, id);
   fs.writeFileSync(file, '');
-  sessions.set(id, { path: file, size, received: 0, name, mime: String(req.body?.mime || 'application/octet-stream').slice(0, 100), boardId: req.body?.boardId || null, at: Date.now() });
+  sessions.set(id, { owner: req.user.email || 'team', path: file, size, received: 0, name, mime: String(req.body?.mime || 'application/octet-stream').slice(0, 100), boardId: req.body?.boardId || null, at: Date.now() });
   res.status(201).json({ id, chunkSize: 16 * 1024 * 1024 });
 });
 
-app.put('/api/uploads/:id', express.raw({ type: () => true, limit: '17mb' }), (req, res) => {
+const ownSession = (req) => {
   const s = sessions.get(req.params.id);
+  return s && s.owner === (req.user.email || 'team') ? s : null;
+};
+
+app.put('/api/uploads/:id', express.raw({ type: () => true, limit: '17mb' }), (req, res) => {
+  const s = ownSession(req);
   if (!s) return res.status(404).json({ error: 'Upload not found — please retry' });
   const offset = Number(req.query.offset);
   // A retried chunk the server already has is fine; anything else out of order is not.
@@ -247,7 +374,7 @@ app.put('/api/uploads/:id', express.raw({ type: () => true, limit: '17mb' }), (r
 });
 
 app.post('/api/uploads/:id/complete', async (req, res) => {
-  const s = sessions.get(req.params.id);
+  const s = ownSession(req);
   if (!s) return res.status(404).json({ error: 'Upload not found — please retry' });
   if (s.received !== s.size) return res.status(400).json({ error: 'Upload incomplete', received: s.received });
   sessions.delete(req.params.id);
@@ -262,6 +389,8 @@ app.post('/api/uploads/:id/complete', async (req, res) => {
       folderKey: project ? project.id : 'unfiled',
       folderName: project ? project.name : 'Unfiled',
     });
+    if (!recentUploads.has(s.owner)) recentUploads.set(s.owner, new Set());
+    recentUploads.get(s.owner).add(meta.url);
     res.json(meta);
   } catch (err) {
     fs.rm(s.path, { force: true }, () => {});
@@ -271,7 +400,7 @@ app.post('/api/uploads/:id/complete', async (req, res) => {
 });
 
 app.delete('/api/uploads/:id', (req, res) => {
-  const s = sessions.get(req.params.id);
+  const s = ownSession(req);
   if (s) { sessions.delete(req.params.id); fs.rm(s.path, { force: true }, () => {}); }
   res.json({ ok: true });
 });
@@ -283,8 +412,15 @@ setInterval(() => {
   }
 }, 3600 * 1000).unref();
 
-app.get('/api/storage', (_req, res) => {
+app.get('/api/storage', needTeam, (_req, res) => {
   res.json({ mode: files.mode, files: Object.keys(files.index.files).length });
+});
+
+// Guests can only load files that appear on boards they can see.
+app.use('/uploads', (req, res, next) => {
+  const url = `/uploads/${path.basename(decodeURIComponent(req.path))}`;
+  if (recentUploads.get(req.user.email || 'team')?.has(url) || perms.canReadFile(req.user, url)) return next();
+  res.status(404).json({ error: 'File not found' });
 });
 
 // Local files first (also everything uploaded before Drive was switched on), then Drive.
@@ -345,7 +481,7 @@ server.on('upgrade', async (req, socket, head) => {
 
 wss.on('connection', (ws, user) => {
   // With Cloudflare sign-in the name comes from the verified account, not from the browser.
-  clients.set(ws, { clientId: '', name: user?.name || '', email: user?.email || '', boardId: null });
+  clients.set(ws, { clientId: '', name: user?.name || '', email: user?.email || '', user, boardId: null });
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (raw) => {
@@ -357,7 +493,9 @@ wss.on('connection', (ws, user) => {
       if (!info.email) info.name = String(msg.name || 'Someone').slice(0, 60);
     } else if (msg.t === 'join') {
       const prev = info.boardId;
-      info.boardId = typeof msg.boardId === 'string' ? msg.boardId : null;
+      const wanted = typeof msg.boardId === 'string' ? msg.boardId : null;
+      // Only join boards this person may see; otherwise they'd receive its live updates.
+      info.boardId = wanted && perms.can(info.user, store.get(wanted), 'view') ? wanted : null;
       if (prev) sendPresence(prev);
       if (info.boardId) sendPresence(info.boardId);
     } else if (msg.t === 'cursor' && info.boardId) {
@@ -397,10 +535,38 @@ function sendPresence(boardId) {
   broadcast(boardId, { t: 'presence', boardId, users: [...seen.values()] });
 }
 
+// Everyone gets their own filtered view of boards and projects.
 function broadcastIndex() {
-  const msg = { t: 'index', boards: store.list(), projects: store.listProjects() };
-  for (const ws of clients.keys()) send(ws, msg);
+  for (const [ws, info] of clients) {
+    send(ws, { t: 'index', boards: perms.visibleBoards(info.user), projects: perms.visibleProjects(info.user) });
+  }
 }
+
+/** After invites, removals or role changes: refresh everyone's lists and drop access that's gone. */
+function accessChanged() {
+  for (const [ws, info] of clients) {
+    if (info.boardId && !perms.can(info.user, store.get(info.boardId), 'view')) {
+      send(ws, { t: 'deleted', boardId: info.boardId });
+      const was = info.boardId;
+      info.boardId = null;
+      sendPresence(was);
+    }
+    // Refresh the verified role so changes apply without signing out.
+    if (info.user?.email) info.user.role = users.roleOf(info.user.email);
+  }
+  broadcastIndex();
+}
+
+// ---------- inactivity ----------
+function sweepInactive() {
+  const removed = users.sweepInactive(store);
+  if (removed.length) {
+    console.log(`Removed ${removed.length} inactive guest invite(s):`, removed.map((r) => `${r.email} → ${r.project}`).join(', '));
+    accessChanged();
+  }
+}
+setTimeout(sweepInactive, 30 * 1000).unref();
+setInterval(sweepInactive, 6 * 3600 * 1000).unref();
 
 let indexTimer = null;
 function scheduleIndexBroadcast() {

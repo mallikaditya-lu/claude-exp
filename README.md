@@ -96,6 +96,8 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 | `APP_PASSWORD` | *(none)* | Shared team password. Used only when Cloudflare Access isn't configured. |
 | `CF_ACCESS_TEAM_DOMAIN` | *(none)* | e.g. `littleunusual.cloudflareaccess.com`. With `CF_ACCESS_AUD`, it turns on per-person sign-in through Cloudflare Access. |
 | `CF_ACCESS_AUD` | *(none)* | The Access application's "Application Audience (AUD) Tag" |
+| `ADMIN_EMAILS` | `admin@littleunusual.com` | Comma-separated. Always admins, and can't be demoted. |
+| `TEAM_DOMAINS` | `littleunusual.co,littleunusual.com` | Email domains that are core team automatically |
 | `PUBLIC_URL` | *(none)* | The site's real address (e.g. `https://refs.littleunusual.co`). People who reach the app another way are sent there to sign in. |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | *(none)* | Full contents of the service account's JSON key. With `GOOGLE_DRIVE_ID`, it turns on Google Drive storage. |
@@ -107,6 +109,20 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 - **Cloudflare Access (recommended):** Cloudflare puts a login in front of the site: Google sign-in, or a one-time code by email. Who may enter is set in the Access policy (e.g. everyone `@littleunusual.co` plus specific guest emails). The app verifies Cloudflare's signed token on every request, including WebSockets, so the raw Railway address can't be used to skip the login. Each person gets a profile named after their email, which they can rename from the sidebar.
 - **Shared password:** set `APP_PASSWORD`. Everyone chooses their own display name.
 - **Neither:** open access. Only for local use.
+
+### Who can see what
+
+| Role | Who | Can |
+| --- | --- | --- |
+| **Admin** | `ADMIN_EMAILS` (default `admin@littleunusual.com`), plus anyone promoted | Everything, plus the **Admin** page: people, roles, inactivity settings |
+| **Core team** | Anyone with an email in `TEAM_DOMAINS` (default `littleunusual.co`, `littleunusual.com`), plus anyone added on the Admin page | See and edit every project, create projects, invite people |
+| **Guest** | Everyone else (freelancers, clients) | Only the projects they're invited to, as **editor**, **commenter** or **viewer** |
+
+- **Inviting:** open a project and click **Share**. Enter emails and pick *Can edit / Can comment / Can view*. Guests sign in with a one-time code and see only those projects. Removing someone takes effect immediately, even if they have the board open.
+- **Commenters** can add comment cards and reply. They can't move or change anything else. **Viewers** can only look.
+- **Inactive guests** lose their project access after the period set on the Admin page (default 60 days). Invites that were never used are removed too. The core team is never removed.
+- **Enforcement:** the server applies every rule to boards, files, uploads, live updates and board lists. A guest can't reach another project's boards or files by guessing links.
+- For invites to work without editing Cloudflare each time, the Cloudflare Access policy should let anyone sign in with a one-time PIN. The app then decides what each person can see.
 
 ### Storage: local disk or Google Drive
 
@@ -135,7 +151,8 @@ server/
   store.js      board + project storage, patch application
   unfurl.js     link previews (SSRF-guarded)
   access.js     Cloudflare Access token verification
-  users.js      signed-in people and their display names
+  users.js      people, roles (admin/team/guest), inactivity settings
+  permissions.js who can view/comment/edit which board; enforced in index.js
   seed.js       first-run example board
   demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)
 src/

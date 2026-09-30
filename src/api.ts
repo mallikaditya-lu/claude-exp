@@ -1,4 +1,4 @@
-import type { Board, BoardSummary, Patch, Project } from './types';
+import type { Board, BoardSummary, GlobalRole, MemberRole, Patch, Project } from './types';
 
 export const clientId = crypto.randomUUID();
 
@@ -19,8 +19,28 @@ export interface Session {
   authRequired: boolean;
   authed: boolean;
   /** Set when signed in through Cloudflare Access. */
-  user: { email: string; name: string } | null;
+  user: { email: string; name: string; role: GlobalRole } | null;
+  role: GlobalRole | null;
   publicUrl: string;
+}
+
+export interface AdminPerson {
+  email: string;
+  name: string | null;
+  role: GlobalRole;
+  lastSeen: number;
+  createdAt: number;
+  pending?: boolean;
+  removedForInactivity: { at: number; projects: string[] } | null;
+  projects: { id: string; name: string; role: MemberRole }[];
+}
+
+export interface AdminData {
+  people: AdminPerson[];
+  settings: { inactiveDays: number };
+  adminEmails: string[];
+  teamDomains: string[];
+  stats: { projects: number; boards: number; files: number; storage: string; activeLast7Days: number };
 }
 
 export interface UploadResult { url: string; name: string; size: number; mime: string }
@@ -40,6 +60,16 @@ export const api = {
   updateProject: (id: string, fields: Partial<Pick<Project, 'name' | 'color'>>) =>
     req<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   deleteProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  setMember: (projectId: string, email: string, role: MemberRole) =>
+    req<Project>(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  removeMember: (projectId: string, email: string) =>
+    req<{ ok: boolean }>(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  admin: () => req<AdminData>('/api/admin'),
+  setPersonRole: (email: string, role: GlobalRole) =>
+    req<{ ok: boolean }>(`/api/admin/people/${encodeURIComponent(email)}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  removePerson: (email: string) => req<{ ok: boolean }>(`/api/admin/people/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  updateSettings: (settings: Partial<AdminData['settings']>) =>
+    req<AdminData['settings']>('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(settings) }),
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),

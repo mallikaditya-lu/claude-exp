@@ -2,14 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api, socket } from '../api';
 import { COLORS, color, isInColumn, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
 import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
-import type { Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
+import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
 import { CanvasContext, type CanvasCtx } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
-  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit,
+  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment,
 } from './icons';
 
 interface Props {
@@ -22,6 +22,8 @@ interface Props {
   me: string;
   openBoard: (id: string) => void;
   notify: (msg: string) => void;
+  /** What the current person may do here (the server enforces the same rules). */
+  access?: Access;
 }
 
 interface View { x: number; y: number; zoom: number }
@@ -74,7 +76,27 @@ function loadView(id: string): View | null {
   } catch { return null; }
 }
 
-export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBoard, notify }: Props) {
+export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage' }: Props) {
+  const canEdit = access === 'manage' || access === 'edit';
+  const canComment = canEdit || access === 'comment';
+  // Viewers can't change anything; commenters only add comment cards and write in them.
+  const change = useCallback((recipe: (b: Board) => Board, key?: string) => {
+    if (canEdit) return rawChange(recipe, key);
+    if (!canComment) return;
+    rawChange((b) => {
+      const next = recipe(b);
+      const onlyComments = Object.values(next.items).every((it) => {
+        const prev = b.items[it.id];
+        if (prev === it) return true;
+        if (it.type !== 'comment') return false;
+        if (!prev) return true;
+        const { comments: _a, ...restA } = it;
+        const { comments: _b, ...restB } = prev;
+        return JSON.stringify(restA) === JSON.stringify(restB);
+      }) && Object.keys(b.items).every((id) => next.items[id]) && next.connections === b.connections && next.title === b.title && next.background === b.background;
+      return onlyComments ? next : b;
+    }, key);
+  }, [rawChange, canEdit, canComment]);
   const rootRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -461,6 +483,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     const sel = already ? selection : new Set([item.id]);
     if (!already) setSelection(sel);
     if (target.closest(INTERACTIVE)) return;
+    if (!canEdit) return; // viewers and commenters can select and click, but not move things
 
     const b0 = getBoard()!;
     const child = isInColumn(item, b0.items);
@@ -547,7 +570,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     e.stopPropagation();
     if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
     if (item.type === 'board' && item.boardId) openBoard(item.boardId);
-    else if (EDITABLE.includes(item.type)) setEditingId(item.id);
+    else if (canEdit && EDITABLE.includes(item.type)) setEditingId(item.id);
   };
 
   const startResize = (e: React.PointerEvent, item: Item) => {
@@ -726,6 +749,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
   }, []);
 
   const onBgDoubleClick = (e: React.MouseEvent) => {
+    if (!canEdit) return;
     if (e.target !== rootRef.current && !(e.target as HTMLElement).classList.contains('world')) return;
     addItem('note', toWorld(e.clientX, e.clientY + 30));
   };
@@ -738,6 +762,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    if (!canEdit) return;
     const p = toWorld(e.clientX, e.clientY);
     const tool = e.dataTransfer.getData(TOOL_MIME) as Tool;
     if (tool) { applyTool(tool, p); return; }
@@ -761,7 +786,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     const copy = (e: ClipboardEvent) => onCopy(e, false);
     const cut = (e: ClipboardEvent) => onCopy(e, true);
     const paste = (e: ClipboardEvent) => {
-      if (isTyping(e.target) || isTyping(document.activeElement)) return;
+      if (!canEdit || isTyping(e.target) || isTyping(document.activeElement)) return;
       const files = [...(e.clipboardData?.files || [])];
       if (files.length) { e.preventDefault(); addFiles(files); return; }
       const text = e.clipboardData?.getData('text/plain')?.trim();
@@ -798,11 +823,16 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
       const mod = e.metaKey || e.ctrlKey;
       const typing = isTyping(e.target);
       const key = e.key.toLowerCase();
+      if (!canEdit && mod && (key === 'z' || key === 'y')) return;
       if (mod && key === 'z' && !typing) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if (mod && key === 'y' && !typing) { e.preventDefault(); redo(); return; }
       if (typing) return;
       if (document.querySelector('.modal')) return;
       if (key === 'escape') { setSelection(new Set()); setSelConn(null); setLineMode(false); setLineFrom(null); return; }
+      if (!canEdit) {
+        if (canComment && !mod && key === 'm') { e.preventDefault(); addItem('comment'); } // M = new comment
+        return;
+      }
       if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); return; }
       if (mod && key === 'd') { e.preventDefault(); duplicate(); return; }
       if (mod && key === 'a') {
@@ -888,10 +918,10 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
           update={(partial, key) => updateItem(item.id, partial, key)}
           setEditing={(on) => setEditing(item.id, on)}
         />
-        {single && !inColumn && !dragging && (
+        {canEdit && single && !inColumn && !dragging && (
           <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
         )}
-        {single && !dragging && !isEditing && SIDES.map((side) => (
+        {canEdit && single && !dragging && !isEditing && SIDES.map((side) => (
           <div
             key={side}
             className={`connect-handle is-${side}`}
@@ -964,7 +994,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     <CanvasContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${spaceHeld ? 'is-space' : ''}`}
+        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px` }}
         onPointerDown={onBgPointerDown}
         onPointerMove={onPointerMove}
@@ -985,7 +1015,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
                     className="conn-hit"
                     d={r.d}
                     onPointerDown={(e) => {
-                      if (e.button !== 0 || spaceRef.current) return;
+                      if (e.button !== 0 || spaceRef.current || !canEdit) return;
                       e.stopPropagation();
                       setSelConn(c.id);
                       setSelection(new Set());
@@ -1060,7 +1090,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
         {!free.length && (
           <div className="empty-hint">
             <b>This board is empty</b>
-            <span>Drag cards from the toolbar, double-click to add a note, paste a link, or drop files here.</span>
+            <span>{canEdit ? 'Drag cards from the toolbar, double-click to add a note, paste a link, or drop files here.' : 'Nothing has been added here yet.'}</span>
           </div>
         )}
 
@@ -1071,7 +1101,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
           </div>
         )}
 
-        {selBox && !dragging && (
+        {canEdit && selBox && !dragging && (
           <div
             className={`context-bar ${selBox.below ? 'is-below' : ''}`}
             style={{ left: selBox.left, top: selBox.top }}
@@ -1167,7 +1197,15 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
         </div>
       </div>
 
-      <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} />
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} />}
+      {!canEdit && canComment && (
+        <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="tool" title="Add a comment (M)" onClick={() => addItem('comment')}>
+            <span className="tool-icon"><IconComment /></span>
+            <span className="tool-label">Comment</span>
+          </button>
+        </nav>
+      )}
 
       <input
         ref={fileRef}
