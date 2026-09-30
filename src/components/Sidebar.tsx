@@ -16,12 +16,14 @@ interface Props {
   onCreateProject: () => void;
   onRename: () => void;
   onClose: () => void;
+  email?: string;
+  onSignOut?: () => void;
 }
 
 const UNFILED = '__unfiled';
 
 export function Sidebar(props: Props) {
-  const { boards, projects, current, currentProject, me, onOpen, onOpenProject, onCreate, onCreateProject, onRename, onClose } = props;
+  const { boards, projects, current, currentProject, me, email, onOpen, onOpenProject, onCreate, onCreateProject, onRename, onClose, onSignOut } = props;
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const byId = useMemo(() => Object.fromEntries(boards.map((b) => [b.id, b])), [boards]);
@@ -137,10 +139,16 @@ export function Sidebar(props: Props) {
         )}
       </div>
       <button className="btn new-board" onClick={() => onCreate(activeProject)}><IconPlus size={15} /> New board</button>
-      <button className="me" onClick={onRename} title="Change your display name">
-        <Avatar name={me} size={24} />
-        <span>{me}</span>
-      </button>
+      <div className="me-row">
+        <button className="me" onClick={onRename} title="Change your display name">
+          <Avatar name={me} size={24} />
+          <span className="me-text">
+            <span className="me-name">{me}</span>
+            {email && <span className="me-email">{email}</span>}
+          </span>
+        </button>
+        {onSignOut && <button className="text-btn" onClick={onSignOut} title="Sign out">Sign out</button>}
+      </div>
     </aside>
   );
 }

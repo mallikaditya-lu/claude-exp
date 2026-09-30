@@ -225,7 +225,11 @@ a { color: var(--accent); }
 .tree-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-empty { color: var(--faint); font-size: 13px; padding: 8px 10px; }
 .new-board { justify-content: center; margin: 4px 2px; }
-.me { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-weight: 500; }
+.me-row { display: flex; align-items: center; gap: 2px; }
+.me { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-weight: 500; flex: 1; min-width: 0; text-align: left; }
+.me-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.me-name, .me-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-email { font-size: 11.5px; color: var(--faint); font-weight: 400; }
 .me:hover { background: var(--hover); }
 
 .topbar {

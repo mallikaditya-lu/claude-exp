@@ -31,9 +31,13 @@ Read README.md for features and configuration. This file covers conventions and 
 ## Deployment plan (in progress)
 1. ✅ Google Drive storage, chunked uploads, daily backups
 2. Railway (Hobby) with a Dockerfile deploy from GitHub `main` (railway.json: healthcheck /api/health), plus a volume at `/data`; a staging service for testing. Railway bans `VOLUME` in Dockerfiles, so don't add it back.
-3. Cloudflare DNS plus Access (Google login for the team), replacing `APP_PASSWORD`
+3. Cloudflare DNS plus Access (Google login for the team), replacing `APP_PASSWORD`. App side done (server/access.js, users.js; env CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, PUBLIC_URL). Test with scripts/fake-access.mjs (+ CF_ACCESS_CERTS_URL).
 4. Client share links (view/comment) and per-project access
 5. Later: video compression and thumbnails (ffmpeg), version history, search
+
+## Branches
+- `main` is production: Railway deploys every commit on it. Never push to `main` directly.
+- Work on a feature branch and open a pull request into `main`; the owner reviews and merges.
 
 ## Conventions
 - Test UI changes in a real browser with Playwright (global install; Chromium at /opt/pw-browsers) before pushing.

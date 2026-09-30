@@ -14,11 +14,21 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface Session {
+  mode: 'cloudflare' | 'password' | 'open';
+  authRequired: boolean;
+  authed: boolean;
+  /** Set when signed in through Cloudflare Access. */
+  user: { email: string; name: string } | null;
+  publicUrl: string;
+}
+
 export interface UploadResult { url: string; name: string; size: number; mime: string }
 export interface LinkMeta { url: string; title: string; description: string; image: string; siteName: string }
 
 export const api = {
-  session: () => req<{ authRequired: boolean; authed: boolean }>('/api/session'),
+  session: () => req<Session>('/api/session'),
+  rename: (name: string) => req<{ email: string; name: string }>('/api/me', { method: 'PATCH', body: JSON.stringify({ name }) }),
   login: (password: string) => req<{ ok: boolean }>('/api/login', { method: 'POST', body: JSON.stringify({ password }) }),
   listBoards: () => req<BoardSummary[]>('/api/boards'),
   getBoard: (id: string) => req<Board>(`/api/boards/${id}`),
