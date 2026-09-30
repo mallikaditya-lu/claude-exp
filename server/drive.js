@@ -15,9 +15,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Resumable-upload progress: the "Range: bytes=0-N" header says bytes 0..N are stored. */
 const nextOffset = (res) => { const r = res.headers.get('range'); return r ? Number(r.split('-')[1]) + 1 : 0; };
 
+/** Accepts the key file's JSON as-is, or base64-encoded (a single line, easier to paste into env settings). */
+function parseCredentials(value) {
+  const v = value.trim();
+  try {
+    return JSON.parse(v.startsWith('{') ? v : Buffer.from(v, 'base64').toString('utf8'));
+  } catch {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON or base64-encoded JSON');
+  }
+}
+
 export class Drive {
   constructor(credentialsJson, driveId) {
-    const creds = typeof credentialsJson === 'string' ? JSON.parse(credentialsJson) : credentialsJson;
+    const creds = typeof credentialsJson === 'string' ? parseCredentials(credentialsJson) : credentialsJson;
     if (!creds.client_email || !creds.private_key) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing client_email / private_key');
     this.email = creds.client_email;
     this.key = creds.private_key;

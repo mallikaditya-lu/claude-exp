@@ -18,7 +18,8 @@ Read README.md for features and configuration. This file covers conventions and 
 - Production uses **Google Shared Drive "Reference Board"** (Workspace, 2 TB pooled).
   - Shared Drive ID: `0AM6JVXPCU2XoUk9PVA`
   - Service account: `reference-board-storage@reference-board-510209.iam.gserviceaccount.com` (Content manager on the drive)
-  - Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (the secret: never commit it, never ask for it in chat), `GOOGLE_DRIVE_ID`.
+  - Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (the secret: raw JSON or base64 of it; never commit it, never ask for it in chat), `GOOGLE_DRIVE_ID`.
+  - In the Claude Code environment the key goes under **API credentials**, not the plain env-var box.
 - Test Drive code without credentials:
   ```
   FAIL_RATE=0.25 node scripts/fake-google.mjs 4010 &
