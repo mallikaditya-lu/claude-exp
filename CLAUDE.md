@@ -19,7 +19,7 @@ Read README.md for features and configuration. This file covers conventions and 
   - Shared Drive ID: `0AM6JVXPCU2XoUk9PVA`
   - Service account: `reference-board-storage@reference-board-510209.iam.gserviceaccount.com` (Content manager on the drive)
   - Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (the secret: raw JSON or base64 of it; never commit it, never ask for it in chat), `GOOGLE_DRIVE_ID`.
-  - In the Claude Code environment the key goes under **API credentials**, not the plain env-var box.
+  - The key is NOT stored in the Claude Code environment: its env box is visible to everyone who uses the environment, and API credentials only inject Bearer headers. Real-Drive checks run on the owner's Mac (`npm run drive:check` with the key read from the file) and on Railway, whose variables hold the key. In sessions, test with scripts/fake-google.mjs.
 - Test Drive code without credentials:
   ```
   FAIL_RATE=0.25 node scripts/fake-google.mjs 4010 &
