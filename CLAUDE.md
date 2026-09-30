@@ -30,7 +30,7 @@ Read README.md for features and configuration. This file covers conventions and 
 
 ## Deployment plan (in progress)
 1. ✅ Google Drive storage, chunked uploads, daily backups
-2. Railway (Hobby) with a Dockerfile deploy from GitHub `main`, plus a volume at `/data`; a staging service for testing
+2. Railway (Hobby) with a Dockerfile deploy from GitHub `main` (railway.json: healthcheck /api/health), plus a volume at `/data`; a staging service for testing. Railway bans `VOLUME` in Dockerfiles, so don't add it back.
 3. Cloudflare DNS plus Access (Google login for the team), replacing `APP_PASSWORD`
 4. Client share links (view/comment) and per-project access
 5. Later: video compression and thumbnails (ffmpeg), version history, search

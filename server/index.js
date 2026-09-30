@@ -49,6 +49,7 @@ if (store.boards.size === 0) {
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', true); // behind Railway / Cloudflare: honour X-Forwarded-Proto for secure cookies
 app.use(express.json({ limit: '5mb' }));
 
 // ---------- optional shared-password auth ----------
@@ -68,6 +69,11 @@ function isAuthed(req) {
   const token = readCookie(req, AUTH_COOKIE);
   return token.length === authToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authToken));
 }
+
+// Unauthenticated health check for the host (Railway) to know the app is up.
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, storage: files.mode, boards: store.boards.size });
+});
 
 app.get('/api/session', (req, res) => {
   res.json({ authRequired: Boolean(PASSWORD), authed: isAuthed(req) });
