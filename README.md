@@ -33,7 +33,7 @@ edits, presence and cursors live.
 - **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick note.
 - **Paste anything:** a URL makes a link card, an image uploads, and plain text makes a note.
 - **Connect:** select a card and drag any of the four dots (top, right, bottom, left) onto another card. Drop near an edge to attach to that side, or near the middle to let the line pick the best side. The **Line** tool (click two cards) also works.
-- **Edit a line:** click it to open its toolbar (colour, thickness, text, dash, line type, arrows). Drag the end circles to re-attach them to another card or side. On elbow lines, drag the blue handle to move the middle segment; double-click the handle to reset it.
+- **Edit a line:** click it to open its toolbar (colour, thickness, text, dash, line type, arrows). Drag the end circles to re-attach them to another card or side. On elbow lines, every segment has a blue handle: the middle one moves the bend, and the end segments slide along their card (or step out past its edge). Double-click a handle to reset it.
 - **Select (like Figma):** drag on empty canvas to box-select. Shift-drag or shift-click adds to the selection.
 - **Navigate:** hold **Space** and drag, or drag with the **middle mouse button**, to pan. Scrolling with a trackpad or wheel also pans. ⌘/Ctrl + scroll or pinch to zoom. ⇧1 fits the board to the screen.
 - **Resize:** drag the square handle at a selected card's bottom-right corner.
@@ -59,6 +59,19 @@ Requires Node 20+.
 npm install
 npm run dev          # API on :3001 + Vite on http://localhost:5173
 ```
+
+### Demo project
+
+A new install creates two things: a small example board, and **“Demo · Aurora Summit launch campaign”**. The demo is a large, realistic project that uses every feature: a hub board with six nested workstream boards (one nested three levels deep), a team wiki, an archive, every card type, columns, all connector styles and light and dark backgrounds. Uploaded files are generated on the spot: storyboard frames, moodboard artwork, music demos, a PDF call sheet and a CSV budget.
+
+To add it to an existing install, stop the app and run:
+
+```bash
+npm run demo        # adds the demo project to ./data (or $DATA_DIR)
+npm start
+```
+
+Some demo photos and videos load from the web (picsum.photos, YouTube, Vimeo, Spotify), so those cards need an internet connection.
 
 Production (one process serves the app, API, uploads and WebSocket):
 
@@ -99,6 +112,7 @@ server/
   store.js      board + project storage, patch application
   unfurl.js     link previews (SSRF-guarded)
   seed.js       first-run example board
+  demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)
 src/
   App.tsx       shell, routing (#/b/<id>), login + name prompt
   useBoard.ts   local-first board state, undo/redo, save + live sync

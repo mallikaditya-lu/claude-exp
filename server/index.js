@@ -9,6 +9,7 @@ import { WebSocketServer } from 'ws';
 import { Store } from './store.js';
 import { unfurl } from './unfurl.js';
 import { seedWelcomeBoard } from './seed.js';
+import { seedDemoProject } from './demo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -21,7 +22,10 @@ const AUTH_COOKIE = 'rb_auth';
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const store = new Store(DATA_DIR);
-if (store.boards.size === 0) seedWelcomeBoard(store);
+if (store.boards.size === 0) {
+  seedWelcomeBoard(store);
+  seedDemoProject(store, UPLOAD_DIR);
+}
 
 const app = express();
 app.disable('x-powered-by');
