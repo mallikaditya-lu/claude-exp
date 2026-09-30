@@ -77,6 +77,20 @@ function alongPolyline(p: Pt[], f = 0.5): Pt {
   return p[p.length - 1];
 }
 
+export interface SegmentHandle {
+  /** 'mid' moves the middle segment; 'from' / 'to' move the segment attached to that end. */
+  kind: 'from' | 'mid' | 'to';
+  x: number;
+  y: number;
+  /** Direction the handle moves in. */
+  axis: 'x' | 'y';
+  /** mid: the two coordinates the bend fraction is measured between. */
+  from?: number;
+  to?: number;
+  /** from/to: the card centre the end's lateral shift is measured from. */
+  origin?: number;
+}
+
 export interface Route {
   d: string;
   /** Label / toolbar position. */
@@ -86,8 +100,8 @@ export interface Route {
   /** Open-chevron arrowheads, already positioned. */
   endArrow: string;
   startArrow: string;
-  /** Draggable handle for the elbow's middle segment. */
-  bend?: { x: number; y: number; axis: 'x' | 'y'; from: number; to: number };
+  /** Draggable handles for elbow segments. */
+  handles: SegmentHandle[];
 }
 
 function chevron(tip: Pt, dir: Pt, size: number) {
@@ -97,23 +111,42 @@ function chevron(tip: Pt, dir: Pt, size: number) {
   return `M${fmt({ x: back.x + px * size * 0.7, y: back.y + py * size * 0.7 })} L${fmt(tip)} L${fmt({ x: back.x - px * size * 0.7, y: back.y - py * size * 0.7 })}`;
 }
 
+type RouteInput = Pick<Connection, 'shape' | 'fromSide' | 'toSide' | 'bend' | 'weight' | 'fromShift' | 'toShift'>;
+
+/**
+ * Where an end leaves its card. `shift` slides it along the side (0 = middle); the anchor stays
+ * on the card, and `lane` is where the attached segment should run (may be beyond the card edge).
+ */
+function end(r: Rect, side: Side, gap: number, shift = 0) {
+  const n = NORMAL[side];
+  const base = anchor(r, side, gap);
+  const vertical = n.y !== 0; // top/bottom sides: shifting moves along x
+  const c = vertical ? r.x + r.w / 2 : r.y + r.h / 2;
+  const lo = vertical ? r.x + 6 : r.y + 6;
+  const hi = vertical ? r.x + r.w - 6 : r.y + r.h - 6;
+  const lane = c + shift;
+  const at = hi > lo ? clamp(lane, lo, hi) : c;
+  const p = vertical ? { x: at, y: base.y } : { x: base.x, y: at };
+  return { p, n, lane, origin: c, jog: Math.abs(lane - at) > 0.5 };
+}
+
 /** Compute the drawn path for a connection between two rects. */
-export function route(c: Pick<Connection, 'shape' | 'fromSide' | 'toSide' | 'bend' | 'weight'>, a: Rect, b: Rect): Route {
+export function route(c: RouteInput, a: Rect, b: Rect): Route {
   const [autoA, autoB] = autoSides(a, b);
   const s1 = c.fromSide || autoA;
   const s2 = c.toSide || autoB;
-  const n1 = NORMAL[s1];
-  const n2 = NORMAL[s2];
-  const p1 = anchor(a, s1, 3);
-  const p2 = anchor(b, s2, 4);
+  const e1 = end(a, s1, 3, c.fromShift);
+  const e2 = end(b, s2, 4, c.toShift);
+  const { p: p1, n: n1 } = e1;
+  const { p: p2, n: n2 } = e2;
   const size = 7 + (c.weight || 1) * 2;
   const shape = c.shape || 'curved';
+  const handles: SegmentHandle[] = [];
 
   let d: string;
   let mid: Pt;
   let startDir: Pt;
   let endDir: Pt;
-  let bend: Route['bend'];
 
   if (shape === 'straight') {
     d = `M${fmt(p1)} L${fmt(p2)}`;
@@ -129,45 +162,73 @@ export function route(c: Pick<Connection, 'shape' | 'fromSide' | 'toSide' | 'ben
     endDir = unit(c2, p2);
     startDir = unit(c1, p1);
   } else {
-    // Elbow: orthogonal segments with rounded corners (FigJam-style).
+    // Elbow: orthogonal segments with rounded corners (FigJam-style). Every segment can be dragged.
     const STUB = 22;
     const h1 = n1.x !== 0;
     const h2 = n2.x !== 0;
     const a1 = { x: p1.x + n1.x * STUB, y: p1.y + n1.y * STUB };
     const b1 = { x: p2.x + n2.x * STUB, y: p2.y + n2.y * STUB };
+    // If an end's lane is past the card edge, step out from the card first, then over to the lane.
+    const jog1 = (lane: Pt): Pt[] => (e1.jog ? [a1, lane] : []);
+    const jog2 = (lane: Pt): Pt[] => (e2.jog ? [lane, b1] : []);
+    const segHandle = (kind: 'from' | 'to', p: Pt, q: Pt, origin: number) => {
+      if (len(p, q) < 18) return;
+      const horizontal = Math.abs(p.y - q.y) < 0.5;
+      handles.push({ kind, x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, axis: horizontal ? 'y' : 'x', origin });
+    };
     let pts: Pt[];
+
     if (h1 && h2) {
+      const y1 = e1.lane;
+      const y2 = e2.lane;
       const t = c.bend ?? 0.5;
       const mx = p1.x + (p2.x - p1.x) * t;
       const ok = c.bend !== undefined || ((mx - p1.x) * n1.x >= STUB && (mx - p2.x) * n2.x >= STUB);
       if (ok) {
-        pts = [p1, { x: mx, y: p1.y }, { x: mx, y: p2.y }, p2];
-        if (Math.abs(p2.x - p1.x) > 2) bend = { x: mx, y: (p1.y + p2.y) / 2, axis: 'x', from: p1.x, to: p2.x };
+        const s = e1.jog ? { x: a1.x, y: y1 } : p1;
+        const f = e2.jog ? { x: b1.x, y: y2 } : p2;
+        pts = [p1, ...jog1(s), { x: mx, y: y1 }, { x: mx, y: y2 }, ...jog2(f), p2];
+        segHandle('from', s, { x: mx, y: y1 }, e1.origin);
+        if (Math.abs(p2.x - p1.x) > 2 && Math.abs(y2 - y1) > 18) handles.push({ kind: 'mid', x: mx, y: (y1 + y2) / 2, axis: 'x', from: p1.x, to: p2.x });
+        segHandle('to', { x: mx, y: y2 }, f, e2.origin);
       } else {
         const my = (p1.y + p2.y) / 2;
         pts = [p1, a1, { x: a1.x, y: my }, { x: b1.x, y: my }, b1, p2];
       }
     } else if (!h1 && !h2) {
+      const x1 = e1.lane;
+      const x2 = e2.lane;
       const t = c.bend ?? 0.5;
       const my = p1.y + (p2.y - p1.y) * t;
       const ok = c.bend !== undefined || ((my - p1.y) * n1.y >= STUB && (my - p2.y) * n2.y >= STUB);
       if (ok) {
-        pts = [p1, { x: p1.x, y: my }, { x: p2.x, y: my }, p2];
-        if (Math.abs(p2.y - p1.y) > 2) bend = { x: (p1.x + p2.x) / 2, y: my, axis: 'y', from: p1.y, to: p2.y };
+        const s = e1.jog ? { x: x1, y: a1.y } : p1;
+        const f = e2.jog ? { x: x2, y: b1.y } : p2;
+        pts = [p1, ...jog1(s), { x: x1, y: my }, { x: x2, y: my }, ...jog2(f), p2];
+        segHandle('from', s, { x: x1, y: my }, e1.origin);
+        if (Math.abs(p2.y - p1.y) > 2 && Math.abs(x2 - x1) > 18) handles.push({ kind: 'mid', x: (x1 + x2) / 2, y: my, axis: 'y', from: p1.y, to: p2.y });
+        segHandle('to', { x: x2, y: my }, f, e2.origin);
       } else {
         const mx = (p1.x + p2.x) / 2;
         pts = [p1, a1, { x: mx, y: a1.y }, { x: mx, y: b1.y }, b1, p2];
       }
-    } else if (h1) {
-      const corner = { x: p2.x, y: p1.y };
-      pts = (corner.x - p1.x) * n1.x > 0 && (corner.y - p2.y) * n2.y > 0
-        ? [p1, corner, p2]
-        : [p1, a1, { x: a1.x, y: b1.y }, b1, p2];
     } else {
-      const corner = { x: p1.x, y: p2.y };
-      pts = (corner.y - p1.y) * n1.y > 0 && (corner.x - p2.x) * n2.x > 0
-        ? [p1, corner, p2]
-        : [p1, a1, { x: b1.x, y: a1.y }, b1, p2];
+      // One horizontal end, one vertical end: a single corner.
+      const laneA = e1.lane; // y if h1, x if v1
+      const laneB = e2.lane;
+      const corner = h1 ? { x: laneB, y: laneA } : { x: laneA, y: laneB };
+      const s = e1.jog ? (h1 ? { x: a1.x, y: laneA } : { x: laneA, y: a1.y }) : p1;
+      const f = e2.jog ? (h2 ? { x: b1.x, y: laneB } : { x: laneB, y: b1.y }) : p2;
+      const forward = h1
+        ? (corner.x - s.x) * n1.x > 0 && (corner.y - f.y) * n2.y > 0
+        : (corner.y - s.y) * n1.y > 0 && (corner.x - f.x) * n2.x > 0;
+      if (forward) {
+        pts = [p1, ...jog1(s), corner, ...jog2(f), p2];
+        segHandle('from', s, corner, e1.origin);
+        segHandle('to', corner, f, e2.origin);
+      } else {
+        pts = h1 ? [p1, a1, { x: a1.x, y: b1.y }, b1, p2] : [p1, a1, { x: b1.x, y: a1.y }, b1, p2];
+      }
     }
     const r = rounded(pts);
     d = r.d;
@@ -177,5 +238,5 @@ export function route(c: Pick<Connection, 'shape' | 'fromSide' | 'toSide' | 'ben
     startDir = unit(r.pts[1], r.pts[0]);
   }
 
-  return { d, mid, start: p1, end: p2, bend, endArrow: chevron(p2, endDir, size), startArrow: chevron(p1, startDir, size) };
+  return { d, mid, start: p1, end: p2, handles, endArrow: chevron(p2, endDir, size), startArrow: chevron(p1, startDir, size) };
 }

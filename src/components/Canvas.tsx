@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, socket } from '../api';
 import { COLORS, color, isInColumn, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
-import { SIDES, STROKE, route, sideForPoint } from '../connectors';
+import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
 import type { Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
 import { CanvasContext, type CanvasCtx } from './CanvasContext';
@@ -605,22 +605,37 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
       const other = end === 'from' ? c.to : c.from;
       if (!hit || hit.id === other) return;
       updateConn(c.id, end === 'from'
-        ? { from: hit.id, fromSide: hit.side, bend: undefined }
-        : { to: hit.id, toSide: hit.side, bend: undefined });
+        ? { from: hit.id, fromSide: hit.side, fromShift: undefined, bend: undefined }
+        : { to: hit.id, toSide: hit.side, toShift: undefined, bend: undefined });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
 
-  const startBend = (e: React.PointerEvent, c: Connection, bend: { axis: 'x' | 'y'; from: number; to: number }) => {
+  /** Drag any segment of an elbow line: the middle one sets `bend`, end segments slide along their card. */
+  const startSegment = (e: React.PointerEvent, c: Connection, h: SegmentHandle) => {
     e.stopPropagation();
     e.preventDefault();
-    const key = `bend-${uid()}`;
-    setDragging(true);
+    const key = `seg-${uid()}`;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let moved = false;
     const onMove = (ev: PointerEvent) => {
+      // Only enter drag mode once the pointer moves, so a double-click to reset still lands on the handle.
+      if (!moved) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
+        moved = true;
+        setDragging(true);
+      }
       const p = toWorld(ev.clientX, ev.clientY);
-      const v = bend.axis === 'x' ? p.x : p.y;
-      updateConn(c.id, { bend: clamp((v - bend.from) / (bend.to - bend.from), -3, 4) }, key);
+      const v = h.axis === 'x' ? p.x : p.y;
+      if (h.kind === 'mid') {
+        updateConn(c.id, { bend: clamp((v - h.from!) / (h.to! - h.from!), -3, 4) }, key);
+      } else {
+        let shift = Math.round(v - h.origin!);
+        if (Math.abs(shift) < 6) shift = 0; // snap back to the centre of the side
+        updateConn(c.id, h.kind === 'from' ? { fromShift: shift || undefined } : { toShift: shift || undefined }, key);
+      }
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -932,8 +947,8 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
     // While an end is being dragged, draw that end at the pointer.
     if (reattach?.conn === c.id) {
       const pt = { x: reattach.x, y: reattach.y, w: 0, h: 0 };
-      if (reattach.end === 'from') { a = pt; shown = { ...c, fromSide: undefined, bend: undefined }; }
-      else { b = pt; shown = { ...c, toSide: undefined, bend: undefined }; }
+      if (reattach.end === 'from') { a = pt; shown = { ...c, fromSide: undefined, fromShift: undefined, bend: undefined }; }
+      else { b = pt; shown = { ...c, toSide: undefined, toShift: undefined, bend: undefined }; }
     }
     if (!a || !b) return null;
     return { c, r: route(shown, a, b) };
@@ -1018,15 +1033,19 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
                   />
                 );
               })}
-              {selPath.r.bend && !reattach && (
+              {!reattach && selPath.r.handles.map((h) => (
                 <div
-                  className={`conn-bend is-${selPath.r.bend.axis}`}
-                  title="Drag to move this segment"
-                  style={{ left: selPath.r.bend.x, top: selPath.r.bend.y, transform: `translate(-50%, -50%) scale(${1 / view.zoom})` }}
-                  onPointerDown={(e) => startBend(e, conn, selPath.r.bend!)}
-                  onDoubleClick={(e) => { e.stopPropagation(); updateConn(conn.id, { bend: undefined }); }}
+                  key={h.kind}
+                  className={`conn-bend is-${h.axis}`}
+                  title="Drag to move this segment · double-click to reset"
+                  style={{ left: h.x, top: h.y, transform: `translate(-50%, -50%) scale(${1 / view.zoom})` }}
+                  onPointerDown={(e) => startSegment(e, conn, h)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    updateConn(conn.id, h.kind === 'mid' ? { bend: undefined } : h.kind === 'from' ? { fromShift: undefined } : { toShift: undefined });
+                  }}
                 />
-              )}
+              ))}
             </>
           )}
           {marquee && <div className="marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}

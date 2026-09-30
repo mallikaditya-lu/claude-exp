@@ -51,6 +51,9 @@ export interface Connection {
   toSide?: Side;
   /** Elbow only: where the middle segment sits between the two ends (0–1, 0.5 = halfway). */
   bend?: number;
+  /** Elbow only: how far each end's segment is slid along its card side, in board units (0 = centred). */
+  fromShift?: number;
+  toShift?: number;
   dash?: boolean;
   /** 1 thin, 2 medium, 3 thick. */
   weight?: number;

@@ -106,7 +106,7 @@ export function ConnectorToolbar({ conn, update, onDelete }: Props) {
       </Dropdown>
       <Dropdown label="Line type" button={ICON[shape]}>
         {(close) => (['elbow', 'curved', 'straight'] as const).map((s) => (
-          <Option key={s} active={shape === s} title={{ elbow: 'Elbow', curved: 'Curved', straight: 'Straight' }[s]} onClick={() => { update({ shape: s, bend: undefined }); close(); }}>
+          <Option key={s} active={shape === s} title={{ elbow: 'Elbow', curved: 'Curved', straight: 'Straight' }[s]} onClick={() => { update({ shape: s, bend: undefined, fromShift: undefined, toShift: undefined }); close(); }}>
             {ICON[s]}
           </Option>
         ))}
