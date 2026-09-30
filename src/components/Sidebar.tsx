@@ -35,19 +35,19 @@ export function Sidebar(props: Props) {
   const children = useMemo(() => {
     const map: Record<string, BoardSummary[]> = {};
     for (const b of boards) {
-      const key = b.parentId || (b.projectId && projects.some((p) => p.id === b.projectId) ? `p:${b.projectId}` : UNFILED);
+      const key = (b.parentId && byId[b.parentId] ? b.parentId : null) || (b.projectId && projects.some((p) => p.id === b.projectId) ? `p:${b.projectId}` : UNFILED);
       (map[key] ||= []).push(b);
     }
     for (const k in map) map[k].sort((a, b) => a.title.localeCompare(b.title));
     return map;
-  }, [boards, projects]);
+  }, [boards, projects, byId]);
 
   // Expand the open board's ancestors and project.
   const ancestors = useMemo(() => {
     const set = new Set<string>();
     let cur = current ? byId[current] : undefined;
     if (cur) set.add(cur.projectId ? `p:${cur.projectId}` : UNFILED);
-    while (cur?.parentId) { set.add(cur.parentId); cur = byId[cur.parentId]; }
+    while (cur?.parentId && byId[cur.parentId]) { set.add(cur.parentId); cur = byId[cur.parentId]; }
     if (currentProject) set.add(`p:${currentProject}`);
     return set;
   }, [byId, current, currentProject]);
@@ -142,10 +142,10 @@ export function Sidebar(props: Props) {
             </div>
             {projects.map((p) =>
               renderGroup(`p:${p.id}`, p.name, color(p.color, 'solid'), () => onOpenProject(p.id), currentProject === p.id))}
-            {!projects.length && (isTeam
+            {!projects.length && !(children[UNFILED] || []).length && (isTeam
               ? <button className="tree-empty link" onClick={onCreateProject}>+ Create your first project</button>
               : <div className="tree-empty">Nothing shared with you yet</div>)}
-            {(children[UNFILED] || []).length > 0 && renderGroup(UNFILED, 'No project', null, () => onOpen(null), false)}
+            {(children[UNFILED] || []).length > 0 && renderGroup(UNFILED, isTeam ? 'No project' : 'Other boards', null, () => onOpen(null), false)}
           </>
         )}
       </div>

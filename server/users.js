@@ -115,7 +115,7 @@ export class Users {
   }
 
   /**
-   * Remove guests' project access after a period of inactivity, including invites that were
+   * Remove guests' project and board access after a period of inactivity, including invites that were
    * never used. Team and admins are never removed. Returns what was removed.
    */
   sweepInactive(store, now = Date.now()) {
@@ -134,6 +134,18 @@ export class Users {
           if (u) {
             u.removedForInactivity = { at: now, projects: [...(u.removedForInactivity?.projects || []), p.name] };
           }
+        }
+      }
+    }
+    // Board invites work the same way.
+    for (const b of store.boards.values()) {
+      for (const [email, m] of Object.entries(b.members || {})) {
+        if (this.roleOf(email) !== 'guest') continue;
+        const u = this.users[email];
+        if (Math.max(u?.lastSeen || 0, m.invitedAt || 0) < cutoff) {
+          store.removeBoardMember(b.id, email);
+          removed.push({ email, project: b.title });
+          if (u) u.removedForInactivity = { at: now, projects: [...(u.removedForInactivity?.projects || []), b.title] };
         }
       }
     }

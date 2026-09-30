@@ -24,6 +24,8 @@ interface Props {
   notify: (msg: string) => void;
   /** What the current person may do here (the server enforces the same rules). */
   access?: Access;
+  /** Scroll to and select this card; bump `n` to do it again for the same card. */
+  focus?: { id: string; n: number } | null;
 }
 
 interface View { x: number; y: number; zoom: number }
@@ -76,7 +78,7 @@ function loadView(id: string): View | null {
   } catch { return null; }
 }
 
-export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage' }: Props) {
+export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', focus }: Props) {
   const canEdit = access === 'manage' || access === 'edit';
   const canComment = canEdit || access === 'comment';
   // Viewers can't change anything; commenters only add comment cards and write in them.
@@ -206,6 +208,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const zoom = clamp(Math.min((width - 200) / (x1 - x0), (height - 120) / (y1 - y0)), MIN_ZOOM, 1);
     setView({ zoom, x: (width - (x1 - x0) * zoom) / 2 - x0 * zoom + 40, y: (height - (y1 - y0) * zoom) / 2 - y0 * zoom });
   }, []);
+
+  useEffect(() => {
+    const r = focus && rectsRef.current[focus.id];
+    const root = rootRef.current;
+    if (!focus || !r || !root) return;
+    needsFit.current = false;
+    const { width, height } = root.getBoundingClientRect();
+    const zoom = Math.max(viewRef.current.zoom, 0.9);
+    setView({ zoom, x: width / 2 - (r.x + r.w / 2) * zoom, y: height / 2 - (r.y + r.h / 2) * zoom });
+    setSelection(new Set([focus.id]));
+  }, [focus]);
 
   useEffect(() => {
     if (needsFit.current && Object.keys(rects).length) {

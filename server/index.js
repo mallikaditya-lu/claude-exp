@@ -14,6 +14,7 @@ import { Files, safeHeaders } from './files.js';
 import { AccessVerifier } from './access.js';
 import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
 import { Permissions, MEMBER_ROLES, atLeast, stampCommentAuthors } from './permissions.js';
+import { Visitors } from './visitors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -28,6 +29,10 @@ const access = process.env.CF_ACCESS_TEAM_DOMAIN && process.env.CF_ACCESS_AUD
   ? new AccessVerifier(process.env.CF_ACCESS_TEAM_DOMAIN, process.env.CF_ACCESS_AUD)
   : null;
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
+// Share links (no sign-in) are built on this address. It must NOT be behind Cloudflare Access.
+const SHARE_URL = (process.env.SHARE_URL || '').replace(/\/$/, '');
+const SHARES_COOKIE = 'rb_shares';
+const VISITOR_COOKIE = 'rb_visitor';
 const AUTH_MODE = access ? 'cloudflare' : PASSWORD ? 'password' : 'open';
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -37,6 +42,7 @@ fs.mkdirSync(TMP_DIR, { recursive: true });
 const store = new Store(DATA_DIR);
 const users = new Users(DATA_DIR);
 const perms = new Permissions(store, users);
+const visitors = new Visitors(DATA_DIR);
 
 // Google Drive storage is used when both variables are set; otherwise files stay on local disk.
 let drive = null;
@@ -80,8 +86,16 @@ function passwordOk(req) {
   return token.length === authToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authToken));
 }
 
-/** Who is making this request: { email, name } (Cloudflare), { anon: true } (password/open), or null. */
-async function identify(req) {
+function setCookie(req, res, name, value, maxAgeDays) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.append('Set-Cookie', `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.round(maxAgeDays * 86400)}${secure ? '; Secure' : ''}`);
+}
+
+/** Share-link tokens this browser has opened (most recent first). */
+const shareTokens = (req) => readCookie(req, SHARES_COOKIE).split('.').filter((t) => /^[\w-]{20,64}$/.test(t)).slice(0, 20);
+
+/** Signed-in team member or invited guest: { email, name, role } (Cloudflare), { anon: true } (password/open), or null. */
+async function identifyMember(req) {
   if (access) {
     try {
       const id = await access.verify(AccessVerifier.tokenFrom(req));
@@ -97,13 +111,27 @@ async function identify(req) {
   return { anon: true, role: 'team' };
 }
 
+/** A person who came in through share links, with the name and email they gave (if any). */
+function identifyVisitor(req) {
+  const tokens = shareTokens(req);
+  if (!tokens.length) return null;
+  const v = visitors.fromCookie(readCookie(req, VISITOR_COOKIE));
+  const user = { visitor: true, tokens, visitorId: v?.id || null, name: v?.name || 'Guest', email: v?.email || '', identified: Boolean(v), role: 'visitor' };
+  return perms.linkShares(user).length ? user : null;
+}
+
+/** Who is making this request: a member (see identifyMember), a link visitor, or null. */
+async function identify(req) {
+  return (await identifyMember(req)) || identifyVisitor(req);
+}
+
 // Unauthenticated health check for the host (Railway) to know the app is up.
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, storage: files.mode, boards: store.boards.size });
 });
 
 app.get('/api/session', async (req, res) => {
-  const user = await identify(req);
+  const user = await identifyMember(req);
   res.json({
     mode: AUTH_MODE,
     authRequired: AUTH_MODE !== 'open',
@@ -111,7 +139,57 @@ app.get('/api/session', async (req, res) => {
     user: user?.email ? user : null,
     role: user?.role || null,
     publicUrl: PUBLIC_URL,
+    shareLinks: Boolean(SHARE_URL) || AUTH_MODE !== 'cloudflare',
   });
+});
+
+// ---------- share links (no sign-in) ----------
+// Opening /s/<token> calls this first. It remembers the token in a cookie (so images and the live
+// connection work too) and says whether the visitor still needs to give a name and email.
+function shareInfo(found, visitor, member) {
+  const { board, share } = found;
+  return {
+    boardId: board.id,
+    title: board.title,
+    mode: share.mode,
+    requireIdentity: share.requireIdentity !== false,
+    visitor: visitor ? { name: visitor.name, email: visitor.email } : null,
+    // Signed-in people with their own access are sent to the full app instead.
+    member,
+  };
+}
+
+app.get('/api/share/:token', async (req, res) => {
+  const found = store.findShare(req.params.token);
+  if (!found) return res.status(404).json({ error: 'This link isn’t active any more. Ask Little Unusual for a new one.' });
+  const tokens = [found.share.token, ...shareTokens(req).filter((t) => t !== found.share.token)].slice(0, 20);
+  setCookie(req, res, SHARES_COOKIE, tokens.join('.'), 180);
+  const member = await identifyMember(req);
+  const memberLevel = member ? perms.boardLevel(member, found.board) : null;
+  const v = visitors.fromCookie(readCookie(req, VISITOR_COOKIE));
+  if (v) visitors.touch(v, found.board.id);
+  res.json(shareInfo(found, v, memberLevel));
+});
+
+app.post('/api/share/:token/identify', (req, res) => {
+  const found = store.findShare(req.params.token);
+  if (!found) return res.status(404).json({ error: 'This link isn’t active any more.' });
+  const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 200);
+  if (!name) return res.status(400).json({ error: 'Please enter your name' });
+  if (!isEmail(email)) return res.status(400).json({ error: 'Please enter a valid email address' });
+  const v = visitors.identify(name, email);
+  visitors.touch(v, found.board.id);
+  setCookie(req, res, VISITOR_COOKIE, visitors.sign(v.id), 365);
+  const tokens = [found.share.token, ...shareTokens(req).filter((t) => t !== found.share.token)].slice(0, 20);
+  setCookie(req, res, SHARES_COOKIE, tokens.join('.'), 180);
+  res.json(shareInfo(found, v, null));
+});
+
+// "Not you?": forget the name and email on this browser.
+app.post('/api/share-forget', (req, res) => {
+  setCookie(req, res, VISITOR_COOKIE, '', 0);
+  res.json({ ok: true });
 });
 
 app.post('/api/login', (req, res) => {
@@ -134,6 +212,7 @@ app.use(['/api', '/uploads'], async (req, res, next) => {
 
 // ---------- people ----------
 app.patch('/api/me', (req, res) => {
+  if (req.user.visitor) return res.status(403).json({ error: 'Not available on shared links' });
   if (!req.user.email) return res.status(400).json({ error: 'Names are set in the browser when not using Cloudflare sign-in' });
   const u = users.rename(req.user.email, req.body?.name || '');
   // Update live presence and cursors everywhere this person is connected.
@@ -157,8 +236,9 @@ app.get('/api/boards', (req, res) => {
 app.post('/api/boards', (req, res) => {
   const parent = req.body?.parentId ? store.get(req.body.parentId) : null;
   const projectId = parent ? parent.projectId : req.body?.projectId || null;
-  // Team can create anywhere; project editors can create boards inside their project.
-  if (!perms.isTeam(req.user) && !atLeast(perms.projectLevel(req.user, projectId), 'edit')) {
+  // Team can create anywhere; editors can create boards inside their project, or inside a board they can edit.
+  const allowed = perms.isTeam(req.user) || (parent ? perms.can(req.user, parent, 'edit') : atLeast(perms.projectLevel(req.user, projectId), 'edit'));
+  if (!allowed) {
     return res.status(403).json({ error: 'You can’t create boards here' });
   }
   const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId });
@@ -210,9 +290,92 @@ app.delete('/api/projects/:id/members/:email', needTeam, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- sharing one board ----------
+const shareBase = (req) => SHARE_URL || `${req.protocol}://${req.get('host')}`;
+const peopleInfo = (email) => ({ name: users.get(email)?.name || null, lastSeen: users.get(email)?.lastSeen || 0 });
+
+/** Everything the Share dialog shows for a board. Team only: it includes the secret link. */
+function sharingInfo(req, board) {
+  const project = board.projectId ? store.projects.get(board.projectId) : null;
+  const members = Object.entries(board.members || {}).map(([email, m]) => ({ email, ...m, ...peopleInfo(email) }));
+  const inherited = [];
+  for (const a of store.ancestors(board.id)) {
+    for (const [email, m] of Object.entries(a.members || {})) inherited.push({ email, role: m.role, ...peopleInfo(email), from: { type: 'board', id: a.id, name: a.title } });
+  }
+  for (const [email, m] of Object.entries(project?.members || {})) inherited.push({ email, role: m.role, ...peopleInfo(email), from: { type: 'project', id: project.id, name: project.name } });
+  const share = board.share || { mode: 'off', requireIdentity: true };
+  const parentLinks = store.ancestors(board.id).filter((a) => a.share && a.share.mode !== 'off').map((a) => ({ id: a.id, title: a.title, mode: a.share.mode }));
+  const linkVisitors = visitors.list()
+    .map((v) => ({ name: v.name, email: v.email, lastSeen: Math.max(0, ...Object.entries(v.boards).filter(([id]) => store.isWithin(id, board.id)).map(([, at]) => at)) }))
+    .filter((v) => v.lastSeen > 0);
+  return {
+    boardId: board.id,
+    project: project ? { id: project.id, name: project.name } : null,
+    members,
+    inherited,
+    link: { mode: share.mode, requireIdentity: share.requireIdentity !== false, url: board.share ? `${shareBase(req)}/s/${board.share.token}` : null },
+    parentLinks,
+    linkVisitors,
+    // In Cloudflare mode, links only work from a hostname that isn't behind Access.
+    shareHostMissing: AUTH_MODE === 'cloudflare' && !SHARE_URL,
+  };
+}
+
+const teamBoard = (req, res) => {
+  const board = store.get(req.params.id);
+  if (!board) { res.status(404).json({ error: 'Board not found' }); return null; }
+  return board;
+};
+
+app.get('/api/boards/:id/sharing', needTeam, (req, res) => {
+  const board = teamBoard(req, res);
+  if (board) res.json(sharingInfo(req, board));
+});
+
+app.put('/api/boards/:id/share', needTeam, (req, res) => {
+  const board = teamBoard(req, res);
+  if (!board) return;
+  const { mode, requireIdentity } = req.body || {};
+  if (mode !== undefined && !['off', 'view', 'comment'].includes(mode)) return res.status(400).json({ error: 'Link access must be off, view or comment' });
+  store.setShare(board.id, { mode, requireIdentity }, req.user.email || 'team');
+  accessChanged();
+  res.json(sharingInfo(req, board));
+});
+
+app.post('/api/boards/:id/share/reset', needTeam, (req, res) => {
+  const board = teamBoard(req, res);
+  if (!board) return;
+  store.resetShareToken(board.id);
+  accessChanged();
+  res.json(sharingInfo(req, board));
+});
+
+app.put('/api/boards/:id/members/:email', needTeam, (req, res) => {
+  const board = teamBoard(req, res);
+  if (!board) return;
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  const role = req.body?.role;
+  if (!isEmail(email)) return res.status(400).json({ error: 'That doesn’t look like an email address' });
+  if (!MEMBER_ROLES.includes(role)) return res.status(400).json({ error: 'Role must be editor, commenter or viewer' });
+  if (users.roleOf(email) !== 'guest') return res.status(400).json({ error: 'That person is on the core team and already has access to every board' });
+  store.setBoardMember(board.id, email, role, req.user.email || 'team');
+  accessChanged();
+  res.json(sharingInfo(req, board));
+});
+
+app.delete('/api/boards/:id/members/:email', needTeam, (req, res) => {
+  const board = teamBoard(req, res);
+  if (!board) return;
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  if (!store.removeBoardMember(board.id, email)) return res.status(404).json({ error: 'Not invited to this board' });
+  accessChanged();
+  res.json(sharingInfo(req, board));
+});
+
 // ---------- admin dashboard ----------
 app.get('/api/admin', needAdmin, (_req, res) => {
   const projects = store.listProjects();
+  const boardsWithMembers = [...store.boards.values()].filter((b) => b.members && Object.keys(b.members).length);
   const people = users.list().map((u) => ({
     email: u.email,
     name: u.name,
@@ -221,21 +384,41 @@ app.get('/api/admin', needAdmin, (_req, res) => {
     createdAt: u.createdAt,
     removedForInactivity: u.removedForInactivity || null,
     projects: projects.filter((p) => p.members?.[u.email]).map((p) => ({ id: p.id, name: p.name, role: p.members[u.email].role })),
+    boards: boardsWithMembers.filter((b) => b.members[u.email]).map((b) => ({ id: b.id, name: b.title, role: b.members[u.email].role })),
   }));
   // People invited to projects who haven't signed in yet.
   for (const p of projects) {
     for (const [email, m] of Object.entries(p.members || {})) {
       let row = people.find((x) => x.email === email);
       if (!row) {
-        row = { email, name: null, role: users.roleOf(email), lastSeen: 0, createdAt: m.invitedAt, pending: true, removedForInactivity: null, projects: [] };
+        row = { email, name: null, role: users.roleOf(email), lastSeen: 0, createdAt: m.invitedAt, pending: true, removedForInactivity: null, projects: [], boards: [] };
         people.push(row);
       }
       if (row.pending) row.projects.push({ id: p.id, name: p.name, role: m.role });
     }
   }
+  for (const b of boardsWithMembers) {
+    for (const [email, m] of Object.entries(b.members)) {
+      let row = people.find((x) => x.email === email);
+      if (!row) {
+        row = { email, name: null, role: users.roleOf(email), lastSeen: 0, createdAt: m.invitedAt, pending: true, removedForInactivity: null, projects: [], boards: [] };
+        people.push(row);
+      }
+      if (row.pending) row.boards.push({ id: b.id, name: b.title, role: m.role });
+    }
+  }
+  const linkVisitors = visitors.list().map((v) => ({
+    id: v.id,
+    name: v.name,
+    email: v.email,
+    createdAt: v.createdAt,
+    lastSeen: v.lastSeen,
+    boards: Object.entries(v.boards).filter(([id]) => store.get(id)).map(([id, at]) => ({ id, name: store.get(id).title, at, link: store.get(id).share?.mode || 'off' })),
+  }));
   people.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
   res.json({
     people,
+    visitors: linkVisitors,
     settings: users.settings,
     adminEmails: ADMIN_EMAILS,
     teamDomains: TEAM_DOMAINS,
@@ -277,6 +460,12 @@ app.delete('/api/admin/people/:email', needAdmin, (req, res) => {
   }
 });
 
+// Forget a link visitor's name and email. (Their access comes from the link: turn it off or reset it to stop it.)
+app.delete('/api/admin/visitors/:id', needAdmin, (req, res) => {
+  if (!visitors.remove(req.params.id)) return res.status(404).json({ error: 'Visitor not found' });
+  res.json({ ok: true });
+});
+
 app.patch('/api/admin/settings', needAdmin, (req, res) => {
   try {
     const settings = users.updateSettings(req.body || {});
@@ -291,7 +480,9 @@ app.get('/api/boards/:id', (req, res) => {
   const board = store.get(req.params.id);
   // Same answer for "missing" and "not yours", so board ids can't be probed.
   if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
-  res.json({ ...board, access: perms.boardLevel(req.user, board) });
+  // Invites and the secret link are only for the Share dialog.
+  const { members: _m, share: _s, ...rest } = board;
+  res.json({ ...rest, access: perms.boardLevel(req.user, board) });
 });
 
 app.post('/api/boards/:id/patch', (req, res) => {
@@ -339,6 +530,7 @@ const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
 const sessions = new Map(); // id -> { path, size, received, name, mime, boardId, at }
 // Files each person uploaded this server run, so they can load them before the card is saved.
 const recentUploads = new Map(); // owner -> Set(url)
+const ownerKey = (user) => (user.visitor ? `visitor:${user.visitorId}` : user.email || 'team');
 
 app.post('/api/uploads', (req, res) => {
   const size = Number(req.body?.size);
@@ -350,13 +542,13 @@ app.post('/api/uploads', (req, res) => {
   const id = crypto.randomUUID();
   const file = path.join(TMP_DIR, id);
   fs.writeFileSync(file, '');
-  sessions.set(id, { owner: req.user.email || 'team', path: file, size, received: 0, name, mime: String(req.body?.mime || 'application/octet-stream').slice(0, 100), boardId: req.body?.boardId || null, at: Date.now() });
+  sessions.set(id, { owner: ownerKey(req.user), path: file, size, received: 0, name, mime: String(req.body?.mime || 'application/octet-stream').slice(0, 100), boardId: req.body?.boardId || null, at: Date.now() });
   res.status(201).json({ id, chunkSize: 16 * 1024 * 1024 });
 });
 
 const ownSession = (req) => {
   const s = sessions.get(req.params.id);
-  return s && s.owner === (req.user.email || 'team') ? s : null;
+  return s && s.owner === ownerKey(req.user) ? s : null;
 };
 
 app.put('/api/uploads/:id', express.raw({ type: () => true, limit: '17mb' }), (req, res) => {
@@ -419,7 +611,7 @@ app.get('/api/storage', needTeam, (_req, res) => {
 // Guests can only load files that appear on boards they can see.
 app.use('/uploads', (req, res, next) => {
   const url = `/uploads/${path.basename(decodeURIComponent(req.path))}`;
-  if (recentUploads.get(req.user.email || 'team')?.has(url) || perms.canReadFile(req.user, url)) return next();
+  if (recentUploads.get(ownerKey(req.user))?.has(url) || perms.canReadFile(req.user, url)) return next();
   res.status(404).json({ error: 'File not found' });
 });
 
@@ -442,6 +634,7 @@ setInterval(runBackup, 6 * 3600 * 1000).unref(); // at most one file per day; re
 
 // ---------- link previews ----------
 app.get('/api/unfurl', async (req, res) => {
+  if (req.user.visitor) return res.status(403).json({ error: 'Not available on shared links' });
   try {
     res.json(await unfurl(String(req.query.url || '')));
   } catch (err) {
@@ -552,7 +745,7 @@ function accessChanged() {
       sendPresence(was);
     }
     // Refresh the verified role so changes apply without signing out.
-    if (info.user?.email) info.user.role = users.roleOf(info.user.email);
+    if (info.user?.email && !info.user.visitor) info.user.role = users.roleOf(info.user.email);
   }
   broadcastIndex();
 }

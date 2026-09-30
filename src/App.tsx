@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, socket, type Session } from './api';
 import { AdminPage } from './components/AdminPage';
+import { BoardShareDialog } from './components/BoardShareDialog';
 import { BoardView } from './components/BoardView';
 import { Home } from './components/Home';
 import { ShareDialog } from './components/ShareDialog';
@@ -40,6 +41,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 900);
   const [shareProjectId, setShareProjectId] = useState<string | null>(null);
+  const [shareBoardId, setShareBoardId] = useState<string | null>(null);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -187,7 +189,7 @@ export default function App() {
             goProject={goProject}
             notify={notify}
             isTeam={isTeam}
-            onShare={setShareProjectId}
+            onShare={setShareBoardId}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />
@@ -214,6 +216,15 @@ export default function App() {
       </main>
       {shareProject && isTeam && (
         <ShareDialog project={shareProject} onClose={() => setShareProjectId(null)} notify={notify} />
+      )}
+      {shareBoardId && isTeam && (
+        <BoardShareDialog
+          boardId={shareBoardId}
+          title={byId[shareBoardId]?.title || 'this board'}
+          onClose={() => setShareBoardId(null)}
+          onOpenProjectShare={(id) => { setShareBoardId(null); setShareProjectId(id); }}
+          notify={notify}
+        />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

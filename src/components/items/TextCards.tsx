@@ -61,6 +61,7 @@ export function CommentCard({ item, update }: CardProps) {
           <div className="comment-main">
             <div className="comment-meta">
               <b>{c.author}</b>
+              {c.viaLink && <span className="via-link" title={`Commented through a share link${c.authorEmail ? ` as ${c.authorEmail}` : ''}`}>guest</span>}
               <span>{timeAgo(c.at)}</span>
             </div>
             <div className="comment-text">{c.text}</div>

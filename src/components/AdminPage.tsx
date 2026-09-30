@@ -112,7 +112,7 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
           <div className="people-wrap">
           <table className="people">
             <thead>
-              <tr><th>Person</th><th>Role</th><th>Projects</th><th>Last active</th><th /></tr>
+              <tr><th>Person</th><th>Role</th><th>Access</th><th>Last active</th><th /></tr>
             </thead>
             <tbody>
               {people.map((p) => {
@@ -136,17 +136,22 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
                       </select>
                     </td>
                     <td>
-                      {p.role !== 'guest' ? <span className="muted">All projects</span> : p.projects.length ? (
+                      {p.role !== 'guest' ? <span className="muted">All projects</span> : p.projects.length || p.boards?.length ? (
                         <div className="chips">
                           {p.projects.map((x) => (
-                            <button key={x.id} className="chip" onClick={() => onOpenProject(x.id)}>
+                            <button key={x.id} className="chip" title="Project" onClick={() => onOpenProject(x.id)}>
+                              {x.name} · {MEMBER_LABEL[x.role]}
+                            </button>
+                          ))}
+                          {(p.boards || []).map((x) => (
+                            <button key={x.id} className="chip is-board" title="Single board" onClick={() => { location.hash = `/b/${x.id}`; }}>
                               {x.name} · {MEMBER_LABEL[x.role]}
                             </button>
                           ))}
                         </div>
                       ) : (
                         <span className="muted">
-                          No projects
+                          No access
                           {p.removedForInactivity && ` · removed for inactivity ${timeAgo(p.removedForInactivity.at)}`}
                         </span>
                       )}
@@ -179,8 +184,58 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
           </form>
           <p className="admin-note">
             Anyone with a {data.teamDomains.map((d) => `@${d}`).join(' or ')} email is core team automatically.
-            Invite freelancers and clients from a project’s <b>Share</b> button.
+            Invite freelancers and clients from a project’s or board’s <b>Share</b> button.
           </p>
+        </section>
+
+        <section className="admin-card">
+          <div className="admin-card-head">
+            <h2>Link visitors</h2>
+            <div className="grow" />
+            <span className="muted">{data.visitors.length} {data.visitors.length === 1 ? 'person' : 'people'}</span>
+          </div>
+          <p>
+            People who opened a share link and gave their name and email (not verified). The link is what gives them access:
+            to stop it, switch the link off or reset it from the board’s <b>Share</b> button.
+          </p>
+          {data.visitors.length ? (
+            <div className="people-wrap">
+              <table className="people">
+                <thead><tr><th>Visitor</th><th>Boards opened</th><th>Last active</th><th /></tr></thead>
+                <tbody>
+                  {data.visitors.map((v) => (
+                    <tr key={v.id}>
+                      <td>
+                        <div className="person">
+                          <Avatar name={v.name} size={30} />
+                          <div><b>{v.name}</b><span>{v.email}</span></div>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="chips">
+                          {v.boards.map((b) => (
+                            <button key={b.id} className={`chip is-board ${b.link === 'off' ? 'is-off' : ''}`} title={b.link === 'off' ? 'Link is off now' : `Link: can ${b.link}`} onClick={() => { location.hash = `/b/${b.id}`; }}>
+                              {b.name}{b.link === 'off' ? ' · link off' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="muted">{timeAgo(v.lastSeen)}</td>
+                      <td>
+                        <button
+                          className="icon-btn danger"
+                          title="Forget this visitor’s name and email"
+                          onClick={() => window.confirm(`Forget ${v.email}? Their comments stay. If they open the link again they’ll be asked for their name.`) && run(api.removeVisitor(v.id), `${v.email} forgotten`)}
+                        >
+                          <IconTrash size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <div className="share-empty">No one has opened a share link yet.</div>}
         </section>
       </div>
     </div>

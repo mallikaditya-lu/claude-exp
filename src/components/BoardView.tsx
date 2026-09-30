@@ -18,7 +18,7 @@ interface Props {
   sidebarOpen: boolean;
   toggleSidebar: () => void;
   isTeam: boolean;
-  onShare: (projectId: string) => void;
+  onShare: (boardId: string) => void;
 }
 
 const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…', offline: 'Offline — retrying', missing: '' };
@@ -113,10 +113,10 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
         <button
           className="btn primary"
           onClick={() => {
-            // The team can invite people to this board's project; everyone else copies the link.
-            if (isTeam && board?.projectId) { onShare(board.projectId); return; }
+            // The team shares the board (invites and links); everyone else copies the address.
+            if (isTeam) { onShare(boardId); return; }
             navigator.clipboard?.writeText(location.href).then(
-              () => notify(isTeam ? 'Board link copied. Put the board in a project to invite people outside the team.' : 'Board link copied'),
+              () => notify('Board link copied'),
               () => notify(location.href),
             );
           }}
