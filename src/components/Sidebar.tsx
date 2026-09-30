@@ -1,51 +1,66 @@
 import { useMemo, useState } from 'react';
-import type { BoardSummary } from '../types';
+import { color } from '../lib';
+import type { BoardSummary, Project } from '../types';
 import { Avatar } from './items/TextCards';
-import { IconBoard, IconChevron, IconHome, IconPlus, IconSearch, IconSidebar } from './icons';
+import { IconBoard, IconChevron, IconFolder, IconHome, IconPlus, IconSearch, IconSidebar } from './icons';
 
 interface Props {
   boards: BoardSummary[];
+  projects: Project[];
   current: string | null;
+  currentProject: string | null;
   me: string;
   onOpen: (id: string | null) => void;
-  onCreate: (parentId?: string | null) => void;
+  onOpenProject: (id: string | null) => void;
+  onCreate: (projectId: string | null) => void;
+  onCreateProject: () => void;
   onRename: () => void;
   onClose: () => void;
 }
 
-export function Sidebar({ boards, current, me, onOpen, onCreate, onRename, onClose }: Props) {
+const UNFILED = '__unfiled';
+
+export function Sidebar(props: Props) {
+  const { boards, projects, current, currentProject, me, onOpen, onOpenProject, onCreate, onCreateProject, onRename, onClose } = props;
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const byId = useMemo(() => Object.fromEntries(boards.map((b) => [b.id, b])), [boards]);
 
   const children = useMemo(() => {
     const map: Record<string, BoardSummary[]> = {};
-    for (const b of boards) (map[b.parentId || 'root'] ||= []).push(b);
+    for (const b of boards) {
+      const key = b.parentId || (b.projectId && projects.some((p) => p.id === b.projectId) ? `p:${b.projectId}` : UNFILED);
+      (map[key] ||= []).push(b);
+    }
     for (const k in map) map[k].sort((a, b) => a.title.localeCompare(b.title));
     return map;
-  }, [boards]);
+  }, [boards, projects]);
 
-  // Expand ancestors of the open board.
+  // Expand the open board's ancestors and project.
   const ancestors = useMemo(() => {
     const set = new Set<string>();
-    const byId = Object.fromEntries(boards.map((b) => [b.id, b]));
     let cur = current ? byId[current] : undefined;
+    if (cur) set.add(cur.projectId ? `p:${cur.projectId}` : UNFILED);
     while (cur?.parentId) { set.add(cur.parentId); cur = byId[cur.parentId]; }
+    if (currentProject) set.add(`p:${currentProject}`);
     return set;
-  }, [boards, current]);
+  }, [byId, current, currentProject]);
 
-  const matches = q.trim()
-    ? boards.filter((b) => b.title.toLowerCase().includes(q.trim().toLowerCase()))
-    : null;
+  const isOpen = (key: string) => open[key] ?? ancestors.has(key);
+  const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !isOpen(key) }));
 
-  const renderNode = (b: BoardSummary, depth: number) => {
+  const matches = q.trim() ? boards.filter((b) => b.title.toLowerCase().includes(q.trim().toLowerCase())) : null;
+  const activeProject = currentProject || (current ? byId[current]?.projectId : null) || null;
+
+  const renderBoard = (b: BoardSummary, depth: number) => {
     const kids = children[b.id] || [];
-    const expanded = open[b.id] ?? ancestors.has(b.id);
+    const expanded = isOpen(b.id);
     return (
       <div key={b.id}>
         <div className={`tree-row ${current === b.id ? 'is-active' : ''}`} style={{ paddingLeft: 8 + depth * 14 }}>
           <button
             className={`tree-toggle ${kids.length ? '' : 'is-hidden'} ${expanded ? 'is-open' : ''}`}
-            onClick={() => setOpen((o) => ({ ...o, [b.id]: !expanded }))}
+            onClick={() => toggle(b.id)}
             aria-label={expanded ? 'Collapse' : 'Expand'}
           >
             <IconChevron size={12} />
@@ -55,7 +70,29 @@ export function Sidebar({ boards, current, me, onOpen, onCreate, onRename, onClo
             <span>{b.title}</span>
           </button>
         </div>
-        {expanded && kids.map((k) => renderNode(k, depth + 1))}
+        {expanded && kids.map((k) => renderBoard(k, depth + 1))}
+      </div>
+    );
+  };
+
+  const renderGroup = (key: string, label: string, dot: string | null, onLabel: () => void, active: boolean) => {
+    const kids = children[key] || [];
+    const expanded = isOpen(key);
+    return (
+      <div key={key}>
+        <div className={`tree-row project-row ${active ? 'is-active' : ''}`}>
+          <button className={`tree-toggle ${expanded ? 'is-open' : ''}`} onClick={() => toggle(key)} aria-label={expanded ? 'Collapse' : 'Expand'}>
+            <IconChevron size={12} />
+          </button>
+          <button className="tree-label" onClick={onLabel} title={label}>
+            {dot ? <IconFolder size={15} style={{ color: dot }} /> : <IconFolder size={15} />}
+            <span>{label}</span>
+          </button>
+          <span className="tree-count">{kids.length}</span>
+        </div>
+        {expanded && (kids.length
+          ? kids.map((b) => renderBoard(b, 1))
+          : <div className="tree-empty indent">No boards yet</div>)}
       </div>
     );
   };
@@ -73,20 +110,33 @@ export function Sidebar({ boards, current, me, onOpen, onCreate, onRename, onClo
         <IconSearch size={14} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a board" />
       </div>
-      <button className={`tree-row home-row ${current ? '' : 'is-active'}`} onClick={() => onOpen(null)}>
+      <button className={`tree-row home-row ${current || currentProject ? '' : 'is-active'}`} onClick={() => onOpen(null)}>
         <IconHome size={15} /> <span>All boards</span>
       </button>
       <div className="tree">
-        {matches
-          ? matches.map((b) => (
-            <div key={b.id} className={`tree-row ${current === b.id ? 'is-active' : ''}`}>
-              <button className="tree-label" onClick={() => onOpen(b.id)}><IconBoard size={14} /><span>{b.title}</span></button>
+        {matches ? (
+          <>
+            {matches.map((b) => (
+              <div key={b.id} className={`tree-row ${current === b.id ? 'is-active' : ''}`}>
+                <button className="tree-label" onClick={() => onOpen(b.id)}><IconBoard size={14} /><span>{b.title}</span></button>
+              </div>
+            ))}
+            {!matches.length && <div className="tree-empty">No boards match “{q}”</div>}
+          </>
+        ) : (
+          <>
+            <div className="tree-heading">
+              <span>Projects</span>
+              <button className="icon-btn small" title="New project" onClick={onCreateProject}><IconPlus size={14} /></button>
             </div>
-          ))
-          : (children.root || []).map((b) => renderNode(b, 0))}
-        {matches && !matches.length && <div className="tree-empty">No boards match “{q}”</div>}
+            {projects.map((p) =>
+              renderGroup(`p:${p.id}`, p.name, color(p.color, 'solid'), () => onOpenProject(p.id), currentProject === p.id))}
+            {!projects.length && <button className="tree-empty link" onClick={onCreateProject}>+ Create your first project</button>}
+            {(children[UNFILED] || []).length > 0 && renderGroup(UNFILED, 'No project', null, () => onOpen(null), false)}
+          </>
+        )}
       </div>
-      <button className="btn new-board" onClick={() => onCreate(null)}><IconPlus size={15} /> New board</button>
+      <button className="btn new-board" onClick={() => onCreate(activeProject)}><IconPlus size={15} /> New board</button>
       <button className="me" onClick={onRename} title="Change your display name">
         <Avatar name={me} size={24} />
         <span>{me}</span>

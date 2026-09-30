@@ -3,18 +3,24 @@ import { api, socket } from './api';
 import { BoardView } from './components/BoardView';
 import { Home } from './components/Home';
 import { Sidebar } from './components/Sidebar';
-import type { BoardSummary } from './types';
+import type { BoardSummary, Project } from './types';
+
+type Route = { board: string | null; project: string | null };
 
 function useHashRoute() {
-  const read = () => location.hash.match(/^#\/b\/([\w-]+)/)?.[1] ?? null;
-  const [boardId, setBoardId] = useState(read);
+  const read = (): Route => ({
+    board: location.hash.match(/^#\/b\/([\w-]+)/)?.[1] ?? null,
+    project: location.hash.match(/^#\/p\/([\w-]+)/)?.[1] ?? null,
+  });
+  const [route, setRoute] = useState(read);
   useEffect(() => {
-    const on = () => setBoardId(read());
+    const on = () => setRoute(read());
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
   const go = useCallback((id: string | null) => { location.hash = id ? `/b/${id}` : '/'; }, []);
-  return [boardId, go] as const;
+  const goProject = useCallback((id: string | null) => { location.hash = id ? `/p/${id}` : '/'; }, []);
+  return [route, go, goProject] as const;
 }
 
 function storedName() {
@@ -25,7 +31,9 @@ export default function App() {
   const [session, setSession] = useState<{ authRequired: boolean; authed: boolean } | null>(null);
   const [name, setName] = useState(storedName);
   const [boards, setBoards] = useState<BoardSummary[]>([]);
-  const [boardId, go] = useHashRoute();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [route, go, goProject] = useHashRoute();
+  const boardId = route.board;
   const [toast, setToast] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 900);
 
@@ -45,22 +53,51 @@ export default function App() {
     if (!ready) return;
     socket.start(name);
     api.listBoards().then(setBoards).catch((err) => notify(err.message));
+    api.listProjects().then(setProjects).catch((err) => notify(err.message));
     return socket.on((msg) => {
-      if (msg.t === 'index') setBoards(msg.boards);
+      if (msg.t === 'index') {
+        setBoards(msg.boards);
+        if (msg.projects) setProjects(msg.projects);
+      }
     });
   }, [ready, name, notify]);
 
   const byId = useMemo(() => Object.fromEntries(boards.map((b) => [b.id, b])), [boards]);
 
-  const createBoard = useCallback(async (parentId: string | null = null) => {
+  const projectsById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+
+  const createBoard = useCallback(async (projectId: string | null = null) => {
     try {
-      const b = await api.createBoard('Untitled board', parentId);
-      setBoards((list) => (list.some((x) => x.id === b.id) ? list : [...list, { ...b, itemCount: 0, cover: null }]));
+      const b = await api.createBoard('Untitled board', null, projectId);
+      setBoards((list) => (list.some((x) => x.id === b.id) ? list : [...list, {
+        ...b, projectId: b.projectId ?? null, background: b.background ?? null, itemCount: 0, cover: null,
+      }]));
       go(b.id);
     } catch (err) {
       notify((err as Error).message);
     }
   }, [go, notify]);
+
+  const createProject = useCallback(async () => {
+    const name = window.prompt('Project name', 'New project')?.trim();
+    if (!name) return;
+    try {
+      const p = await api.createProject(name, ['purple', 'blue', 'teal', 'orange', 'pink', 'green', 'red'][projects.length % 7]);
+      setProjects((list) => (list.some((x) => x.id === p.id) ? list : [...list, p]));
+      goProject(p.id);
+    } catch (err) {
+      notify((err as Error).message);
+    }
+  }, [goProject, notify, projects.length]);
+
+  const moveBoard = useCallback(async (id: string, projectId: string | null) => {
+    setBoards((list) => list.map((b) => (b.id === id ? { ...b, projectId } : b)));
+    try {
+      await api.patchBoard(id, { projectId });
+    } catch (err) {
+      notify((err as Error).message);
+    }
+  }, [notify]);
 
   const deleteBoard = useCallback(async (id: string) => {
     const b = byId[id];
@@ -83,7 +120,11 @@ export default function App() {
       {sidebar && (
         <Sidebar
           boards={boards}
+          projects={projects}
           current={boardId}
+          currentProject={route.project}
+          onOpenProject={goProject}
+          onCreateProject={createProject}
           me={name}
           onOpen={go}
           onCreate={createBoard}
@@ -100,19 +141,28 @@ export default function App() {
             key={boardId}
             boardId={boardId}
             boards={byId}
+            projects={projectsById}
             me={name}
             go={go}
+            goProject={goProject}
             notify={notify}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />
         ) : (
           <Home
+            key={route.project || 'all'}
             boards={boards}
+            projects={projects}
+            projectId={route.project}
             me={name}
             onOpen={go}
-            onCreate={() => createBoard(null)}
+            onOpenProject={goProject}
+            onCreate={createBoard}
+            onCreateProject={createProject}
+            onMove={moveBoard}
             onDelete={deleteBoard}
+            notify={notify}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />

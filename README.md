@@ -20,7 +20,13 @@ edits, presence and cursors live.
 | **Board** | A nested board. Double-click to open it; breadcrumbs and the sidebar show the hierarchy. |
 | **Column** | Drag cards in and out to group and order them. |
 | **Image / Video / Audio / File** | Upload via the toolbar, drag files from your desktop, or paste images. Audio gets an inline player, video a native player, and PDFs and other files a download card. |
-| **Line** | Arrow connecting two cards, with an optional label and colour. |
+| **Line** | Curved arrow (Figma-style) connecting two cards, with an optional label and colour. |
+
+## Projects and backgrounds
+
+- **Projects** group boards like folders. The home page shows every project, recently updated boards, and boards without a project. Open a project to see only its boards. Nested boards follow their parent's project.
+- Move a board between projects with the **⋯** menu on its tile. Deleting a project keeps its boards; they become unfiled.
+- **Board background:** use the palette button in a board's top bar. Dark backgrounds (Graphite, Charcoal, Midnight, Forest) switch that board's cards and tools to dark grey. The choice is saved on the board, so everyone sees it.
 
 ## Using it
 
@@ -71,7 +77,7 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 | Env var | Default | |
 | --- | --- | --- |
 | `PORT` | `3001` | HTTP port |
-| `DATA_DIR` | `./data` | Where boards (`boards/*.json`) and uploads (`uploads/`) are stored. Back up this folder. |
+| `DATA_DIR` | `./data` | Where boards (`boards/*.json`), projects (`projects.json`) and uploads (`uploads/`) are stored. Back up this folder. |
 | `APP_PASSWORD` | *(none)* | Shared team password. **Set this for anything reachable beyond your machine.** |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit |
 
@@ -88,7 +94,7 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 ```
 server/
   index.js      HTTP API, uploads, auth, WebSocket fan-out
-  store.js      board storage + patch application
+  store.js      board + project storage, patch application
   unfurl.js     link previews (SSRF-guarded)
   seed.js       first-run example board
 src/

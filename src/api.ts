@@ -1,4 +1,4 @@
-import type { Board, BoardSummary, Patch } from './types';
+import type { Board, BoardSummary, Patch, Project } from './types';
 
 export const clientId = crypto.randomUUID();
 
@@ -22,8 +22,14 @@ export const api = {
   login: (password: string) => req<{ ok: boolean }>('/api/login', { method: 'POST', body: JSON.stringify({ password }) }),
   listBoards: () => req<BoardSummary[]>('/api/boards'),
   getBoard: (id: string) => req<Board>(`/api/boards/${id}`),
-  createBoard: (title: string, parentId: string | null = null) =>
-    req<Board>('/api/boards', { method: 'POST', body: JSON.stringify({ title, parentId }) }),
+  createBoard: (title: string, parentId: string | null = null, projectId: string | null = null) =>
+    req<Board>('/api/boards', { method: 'POST', body: JSON.stringify({ title, parentId, projectId }) }),
+  listProjects: () => req<Project[]>('/api/projects'),
+  createProject: (name: string, color = 'purple') =>
+    req<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ name, color }) }),
+  updateProject: (id: string, fields: Partial<Pick<Project, 'name' | 'color'>>) =>
+    req<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
+  deleteProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),

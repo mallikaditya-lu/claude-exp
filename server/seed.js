@@ -17,7 +17,8 @@ export function seedWelcomeBoard(store) {
     connections[cid] = { id: cid, from, to };
   };
 
-  const root = store.create({ title: 'Welcome — Hero film research' });
+  const project = store.createProject({ name: 'Example project', color: 'purple' });
+  const root = store.create({ title: 'Welcome — Hero film research', projectId: project.id });
   const interviews = store.create({ title: 'Founder interviews', parentId: root.id });
 
   const hero = add({ type: 'heading', x: 620, y: 40, w: 220, text: 'Hero movie', color: 'red' });

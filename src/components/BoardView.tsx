@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clientId } from '../api';
-import type { BoardSummary } from '../types';
+import { BACKGROUNDS, background, color } from '../lib';
+import type { BoardSummary, Project } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
+import { IconChevron, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
 
 interface Props {
   boardId: string;
   boards: Record<string, BoardSummary>;
+  projects: Record<string, Project>;
   me: string;
   go: (id: string | null) => void;
+  goProject: (id: string | null) => void;
   notify: (msg: string) => void;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -18,7 +21,7 @@ interface Props {
 
 const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…', offline: 'Offline — retrying', missing: '' };
 
-export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggleSidebar }: Props) {
+export function BoardView({ boardId, boards, projects, me, go, goProject, notify, sidebarOpen, toggleSidebar }: Props) {
   const { board, status, presence, change, undo, redo, getBoard } = useBoard(boardId);
   const [title, setTitle] = useState('');
   useEffect(() => { if (board) setTitle(board.title); }, [board?.title]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -35,6 +38,8 @@ export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggle
   }
 
   const others = presence.filter((p) => p.clientId !== clientId);
+  const project = board?.projectId ? projects[board.projectId] : undefined;
+  const bg = background(board?.background);
 
   if (status === 'missing') {
     return (
@@ -52,6 +57,15 @@ export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggle
         {!sidebarOpen && <button className="icon-btn" title="Show sidebar" onClick={toggleSidebar}><IconSidebar size={18} /></button>}
         <nav className="crumbs">
           <button className="crumb" onClick={() => go(null)}>All boards</button>
+          {project && (
+            <span className="crumb-wrap">
+              <IconChevron size={12} />
+              <button className="crumb crumb-project" onClick={() => goProject(project.id)}>
+                <span className="project-dot" style={{ background: color(project.color, 'solid') }} />
+                {project.name}
+              </button>
+            </span>
+          )}
           {crumbs.map((c) => (
             <span key={c.id} className="crumb-wrap">
               <IconChevron size={12} />
@@ -79,6 +93,12 @@ export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggle
           {others.slice(0, 5).map((p) => <Avatar key={p.clientId} name={p.name} size={28} />)}
           {others.length > 5 && <span className="avatar more">+{others.length - 5}</span>}
         </div>
+        {board && (
+          <BackgroundPicker
+            value={bg.id}
+            onChange={(id) => change((b) => ({ ...b, background: id === 'default' ? null : id }))}
+          />
+        )}
         <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>
         <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>
         <button
@@ -93,7 +113,10 @@ export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggle
           <IconShare size={15} /> Share
         </button>
       </header>
-      <div className="board-stage">
+      <div
+        className={`board-stage ${bg.dark ? 'theme-dark' : 'theme-light'}`}
+        style={{ ['--canvas' as string]: bg.canvas, ['--dot' as string]: bg.dot }}
+      >
         {board ? (
           <Canvas
             key={board.id}
@@ -111,6 +134,46 @@ export function BoardView({ boardId, boards, me, go, notify, sidebarOpen, toggle
           <div className="splash"><div className="spinner" /></div>
         )}
       </div>
+    </div>
+  );
+}
+
+function BackgroundPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [open]);
+
+  return (
+    <div className="bg-picker" ref={ref}>
+      <button className={`icon-btn ${open ? 'is-on' : ''}`} title="Board background" onClick={() => setOpen((o) => !o)}>
+        <IconPalette size={17} />
+      </button>
+      {open && (
+        <div className="menu bg-menu">
+          <div className="menu-label">Background</div>
+          <div className="bg-grid">
+            {BACKGROUNDS.map((b) => (
+              <button
+                key={b.id}
+                className={`bg-swatch ${b.id === value ? 'is-active' : ''}`}
+                title={b.label}
+                onClick={() => onChange(b.id)}
+              >
+                <span className="bg-chip" style={{ background: b.canvas }}>
+                  <span className="bg-chip-card" style={{ background: b.dark ? '#3a3a3a' : '#fff' }} />
+                </span>
+                <span className="bg-name">{b.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="menu-note">Dark backgrounds switch the cards to dark too. Everyone on the board sees the change.</div>
+        </div>
+      )}
     </div>
   );
 }

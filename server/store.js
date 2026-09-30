@@ -10,6 +10,13 @@ export class Store {
     fs.mkdirSync(this.dir, { recursive: true });
     this.boards = new Map();
     this.timers = new Map();
+    this.projectsFile = path.join(dataDir, 'projects.json');
+    this.projects = new Map();
+    try {
+      for (const p of JSON.parse(fs.readFileSync(this.projectsFile, 'utf8'))) this.projects.set(p.id, p);
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error('Could not read projects:', err.message);
+    }
     for (const f of fs.readdirSync(this.dir)) {
       if (!f.endsWith('.json')) continue;
       try {
@@ -30,6 +37,8 @@ export class Store {
       id: b.id,
       title: b.title,
       parentId: b.parentId,
+      projectId: b.projectId || null,
+      background: b.background || null,
       updatedAt: b.updatedAt,
       createdAt: b.createdAt,
       itemCount: items.length,
@@ -45,12 +54,16 @@ export class Store {
     return this.boards.get(id) || null;
   }
 
-  create({ title, parentId = null, items = {}, connections = {} }) {
+  create({ title, parentId = null, projectId = null, items = {}, connections = {} }) {
     const now = Date.now();
+    const parent = parentId ? this.boards.get(parentId) : null;
     const board = {
       id: crypto.randomUUID(),
       title: String(title || 'Untitled board').slice(0, 200),
-      parentId: parentId && this.boards.has(parentId) ? parentId : null,
+      parentId: parent ? parentId : null,
+      // Nested boards live in their parent's project.
+      projectId: parent ? parent.projectId || null : this.projects.has(projectId) ? projectId : null,
+      background: parent?.background || null,
       items,
       connections,
       version: 1,
@@ -70,6 +83,15 @@ export class Store {
     if (typeof patch.title === 'string') {
       board.title = patch.title.slice(0, 200);
       clean.title = board.title;
+    }
+    if (patch.background === null || typeof patch.background === 'string') {
+      board.background = patch.background ? patch.background.slice(0, 40) : null;
+      clean.background = board.background;
+    }
+    if (patch.projectId === null || typeof patch.projectId === 'string') {
+      const pid = patch.projectId && this.projects.has(patch.projectId) ? patch.projectId : null;
+      this.setProject(id, pid);
+      clean.projectId = pid;
     }
     if (Array.isArray(patch.upsertItems)) {
       clean.upsertItems = [];
@@ -118,6 +140,65 @@ export class Store {
       fs.rm(this.file(bid), { force: true }, () => {});
     }
     return doomed;
+  }
+
+  // Moves a top-level board (and every board nested in it) into a project.
+  setProject(id, projectId) {
+    const ids = [id];
+    for (let i = 0; i < ids.length; i++) {
+      const b = this.boards.get(ids[i]);
+      if (!b) continue;
+      if (b.projectId !== projectId) {
+        b.projectId = projectId;
+        if (i > 0) this.persist(b.id);
+      }
+      for (const c of this.boards.values()) if (c.parentId === ids[i]) ids.push(c.id);
+    }
+  }
+
+  // ---------- projects (folders of boards) ----------
+  listProjects() {
+    return [...this.projects.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  createProject({ name, color }) {
+    const project = {
+      id: crypto.randomUUID(),
+      name: String(name || 'Untitled project').slice(0, 120),
+      color: typeof color === 'string' ? color.slice(0, 20) : 'purple',
+      createdAt: Date.now(),
+    };
+    this.projects.set(project.id, project);
+    this.saveProjects();
+    return project;
+  }
+
+  updateProject(id, { name, color }) {
+    const p = this.projects.get(id);
+    if (!p) return null;
+    if (typeof name === 'string') p.name = name.slice(0, 120) || 'Untitled project';
+    if (typeof color === 'string') p.color = color.slice(0, 20);
+    this.saveProjects();
+    return p;
+  }
+
+  // Deleting a project keeps its boards; they become unfiled.
+  deleteProject(id) {
+    if (!this.projects.delete(id)) return false;
+    for (const b of this.boards.values()) {
+      if (b.projectId === id) {
+        b.projectId = null;
+        this.persist(b.id);
+      }
+    }
+    this.saveProjects();
+    return true;
+  }
+
+  saveProjects() {
+    const tmp = `${this.projectsFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.listProjects(), null, 2));
+    fs.renameSync(tmp, this.projectsFile);
   }
 
   file(id) {

@@ -16,6 +16,22 @@ export const COLORS: Record<string, { tint: string; solid: string; label: string
   green: { tint: 'var(--tint-green)', solid: '#2e9e55', label: 'Green' },
 };
 
+// ---------- canvas backgrounds ----------
+// `dark` switches cards, toolbars and text on that board to the dark palette.
+export const BACKGROUNDS: { id: string; label: string; canvas: string; dot: string; dark: boolean }[] = [
+  { id: 'default', label: 'Light grey', canvas: '#eceef1', dot: '#d3d7de', dark: false },
+  { id: 'white', label: 'White', canvas: '#ffffff', dot: '#e3e6eb', dark: false },
+  { id: 'warm', label: 'Warm', canvas: '#f3efe8', dot: '#dcd5c8', dark: false },
+  { id: 'mint', label: 'Mint', canvas: '#e7f2ee', dot: '#cbe0d8', dark: false },
+  { id: 'lilac', label: 'Lilac', canvas: '#efecf8', dot: '#d8d2ec', dark: false },
+  { id: 'graphite', label: 'Graphite', canvas: '#2c2c2c', dot: '#3d3d3d', dark: true },
+  { id: 'charcoal', label: 'Charcoal', canvas: '#1e1e1e', dot: '#303030', dark: true },
+  { id: 'midnight', label: 'Midnight', canvas: '#161b2b', dot: '#262d44', dark: true },
+  { id: 'forest', label: 'Forest', canvas: '#172420', dot: '#253631', dark: true },
+];
+
+export const background = (id?: string | null) => BACKGROUNDS.find((b) => b.id === id) || BACKGROUNDS[0];
+
 export const color = (name: string | undefined, kind: 'tint' | 'solid') => (COLORS[name || 'default'] || COLORS.default)[kind];
 
 // ---------- formatting ----------
@@ -178,6 +194,7 @@ export function maxZ(items: Record<string, Item>) {
 export function diffBoards(a: Board, b: Board): Patch | null {
   const patch: Patch = {};
   if (a.title !== b.title) patch.title = b.title;
+  if ((a.background || null) !== (b.background || null)) patch.background = b.background || null;
   const up = Object.values(b.items).filter((it) => a.items[it.id] !== it);
   const rm = Object.keys(a.items).filter((id) => !b.items[id]);
   const cup = Object.values(b.connections).filter((c) => a.connections[c.id] !== c);
@@ -196,5 +213,12 @@ export function applyPatch(board: Board, patch: Patch): Board {
   for (const id of patch.removeItems || []) delete items[id];
   for (const c of patch.upsertConnections || []) connections[c.id] = c;
   for (const id of patch.removeConnections || []) delete connections[id];
-  return { ...board, title: patch.title ?? board.title, items, connections };
+  return {
+    ...board,
+    title: patch.title ?? board.title,
+    background: patch.background !== undefined ? patch.background : board.background,
+    projectId: patch.projectId !== undefined ? patch.projectId : board.projectId,
+    items,
+    connections,
+  };
 }

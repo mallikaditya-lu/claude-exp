@@ -71,9 +71,33 @@ app.get('/api/boards', (_req, res) => {
 });
 
 app.post('/api/boards', (req, res) => {
-  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null });
+  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId: req.body?.projectId || null });
   broadcastIndex();
   res.status(201).json(board);
+});
+
+// ---------- projects ----------
+app.get('/api/projects', (_req, res) => {
+  res.json(store.listProjects());
+});
+
+app.post('/api/projects', (req, res) => {
+  const project = store.createProject(req.body || {});
+  broadcastIndex();
+  res.status(201).json(project);
+});
+
+app.patch('/api/projects/:id', (req, res) => {
+  const project = store.updateProject(req.params.id, req.body || {});
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  broadcastIndex();
+  res.json(project);
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  if (!store.deleteProject(req.params.id)) return res.status(404).json({ error: 'Project not found' });
+  broadcastIndex();
+  res.json({ ok: true });
 });
 
 app.get('/api/boards/:id', (req, res) => {
@@ -240,7 +264,7 @@ function sendPresence(boardId) {
 }
 
 function broadcastIndex() {
-  const msg = { t: 'index', boards: store.list() };
+  const msg = { t: 'index', boards: store.list(), projects: store.listProjects() };
   for (const ws of clients.keys()) send(ws, msg);
 }
 

@@ -65,14 +65,43 @@ function sameRects(a: Record<string, Rect>, b: Record<string, Rect>) {
   return true;
 }
 
-/** Point where the segment from the centre of `r` toward `to` leaves `r` (plus padding). */
-function edgePoint(r: Rect, to: { x: number; y: number }, pad = 8) {
-  const c = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-  const dx = to.x - c.x;
-  const dy = to.y - c.y;
-  if (!dx && !dy) return c;
-  const t = Math.min((r.w / 2 + pad) / Math.abs(dx || 1e-9), (r.h / 2 + pad) / Math.abs(dy || 1e-9));
-  return { x: c.x + dx * Math.min(t, 1), y: c.y + dy * Math.min(t, 1) };
+/**
+ * Figma-style curved connector between two rects: leaves from the side facing the other card
+ * and enters the target's facing side, with tangents perpendicular to those sides.
+ */
+function curvePath(a: Rect, b: Rect, gap = 6) {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x;
+  const dy = bc.y - ac.y;
+  // Compare the free space between the boxes on each axis, not just centre distance.
+  const horizontal = Math.abs(dx) - (a.w + b.w) / 2 > Math.abs(dy) - (a.h + b.h) / 2;
+  let p1: { x: number; y: number };
+  let p2: { x: number; y: number };
+  let n1: { x: number; y: number };
+  let n2: { x: number; y: number };
+  if (horizontal) {
+    const s = Math.sign(dx) || 1;
+    p1 = { x: s > 0 ? a.x + a.w + gap : a.x - gap, y: ac.y };
+    p2 = { x: s > 0 ? b.x - gap : b.x + b.w + gap, y: bc.y };
+    n1 = { x: s, y: 0 };
+    n2 = { x: -s, y: 0 };
+  } else {
+    const s = Math.sign(dy) || 1;
+    p1 = { x: ac.x, y: s > 0 ? a.y + a.h + gap : a.y - gap };
+    p2 = { x: bc.x, y: s > 0 ? b.y - gap : b.y + b.h + gap };
+    n1 = { x: 0, y: s };
+    n2 = { x: 0, y: -s };
+  }
+  const k = clamp(Math.hypot(p2.x - p1.x, p2.y - p1.y) * 0.5, 24, 180);
+  const c1 = { x: p1.x + n1.x * k, y: p1.y + n1.y * k };
+  const c2 = { x: p2.x + n2.x * k, y: p2.y + n2.y * k };
+  const r = (v: number) => Math.round(v * 10) / 10;
+  return {
+    d: `M${r(p1.x)} ${r(p1.y)} C${r(c1.x)} ${r(c1.y)} ${r(c2.x)} ${r(c2.y)} ${r(p2.x)} ${r(p2.y)}`,
+    // Point on the curve at t = 0.5, for labels and the line's toolbar.
+    mid: { x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8 },
+  };
 }
 
 function loadView(id: string): View | null {
@@ -840,22 +869,15 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
   };
 
   const conn = selConn ? board.connections[selConn] : null;
-  const connMid = (() => {
-    if (!conn) return null;
-    const a = rects[conn.from];
-    const b = rects[conn.to];
-    if (!a || !b) return null;
-    return { x: ((a.x + a.w / 2 + b.x + b.w / 2) / 2) * view.zoom + view.x, y: ((a.y + a.h / 2 + b.y + b.h / 2) / 2) * view.zoom + view.y };
-  })();
-
   const connectionPaths = Object.values(board.connections).map((c) => {
     const a = rects[c.from];
     const b = rects[c.to];
     if (!a || !b) return null;
-    const p1 = edgePoint(a, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
-    const p2 = edgePoint(b, { x: a.x + a.w / 2, y: a.y + a.h / 2 });
-    return { c, p1, p2 };
-  }).filter(Boolean) as { c: Connection; p1: { x: number; y: number }; p2: { x: number; y: number } }[];
+    return { c, ...curvePath(a, b) };
+  }).filter(Boolean) as { c: Connection; d: string; mid: { x: number; y: number } }[];
+
+  const selPath = conn ? connectionPaths.find((p) => p.c.id === conn.id) : null;
+  const connMid = selPath ? { x: selPath.mid.x * view.zoom + view.x, y: selPath.mid.y * view.zoom + view.y } : null;
 
   return (
     <CanvasContext.Provider value={ctx}>
@@ -872,36 +894,38 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
         <div ref={worldRef} className="world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
           <svg className="connections" width="1" height="1">
             <defs>
-              <marker id="rb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M0 0L10 5L0 10z" fill="context-stroke" />
-              </marker>
+              {['line', 'accent', ...Object.keys(COLORS)].map((k) => (
+                <marker key={k} id={`rb-arrow-${k}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0 0L10 5L0 10z" style={{ fill: k === 'line' ? 'var(--line)' : k === 'accent' ? 'var(--accent)' : color(k, 'solid') }} />
+                </marker>
+              ))}
             </defs>
-            {connectionPaths.map(({ c, p1, p2 }) => (
+            {connectionPaths.map(({ c, d }) => (
               <g key={c.id} className={`conn ${selConn === c.id ? 'is-selected' : ''}`}>
-                <line
+                <path
                   className="conn-hit"
-                  x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
+                  d={d}
                   onPointerDown={(e) => { e.stopPropagation(); setSelConn(c.id); setSelection(new Set()); setEditingId(null); }}
                 />
-                <line
+                <path
                   className="conn-line"
-                  x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
-                  stroke={c.color ? color(c.color, 'solid') : undefined}
-                  markerEnd="url(#rb-arrow)"
+                  d={d}
+                  style={selConn === c.id ? undefined : c.color ? { stroke: color(c.color, 'solid') } : undefined}
+                  markerEnd={`url(#rb-arrow-${selConn === c.id ? 'accent' : c.color || 'line'})`}
                 />
               </g>
             ))}
             {linking && rects[linking.from] && (() => {
               const r = rects[linking.from];
-              const p1 = edgePoint(r, linking, 2);
-              return <line className="conn-line is-temp" x1={p1.x} y1={p1.y} x2={linking.x} y2={linking.y} markerEnd="url(#rb-arrow)" />;
+              const { d } = curvePath(r, { x: linking.x, y: linking.y, w: 0, h: 0 }, 2);
+              return <path className="conn-line is-temp" d={d} markerEnd="url(#rb-arrow-accent)" />;
             })()}
           </svg>
-          {connectionPaths.filter(({ c }) => c.label).map(({ c, p1, p2 }) => (
+          {connectionPaths.filter(({ c }) => c.label).map(({ c, mid }) => (
             <div
               key={c.id}
               className="conn-label"
-              style={{ left: (p1.x + p2.x) / 2, top: (p1.y + p2.y) / 2 }}
+              style={{ left: mid.x, top: mid.y }}
               onPointerDown={(e) => { e.stopPropagation(); setSelConn(c.id); setSelection(new Set()); }}
             >
               {c.label}

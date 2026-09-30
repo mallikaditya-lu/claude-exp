@@ -42,6 +42,9 @@ export interface Board {
   id: string;
   title: string;
   parentId: string | null;
+  projectId?: string | null;
+  /** Canvas background preset key (see BACKGROUNDS in lib.ts). */
+  background?: string | null;
   items: Record<string, Item>;
   connections: Record<string, Connection>;
   version: number;
@@ -53,14 +56,20 @@ export interface BoardSummary {
   id: string;
   title: string;
   parentId: string | null;
+  projectId: string | null;
+  background: string | null;
   updatedAt: number;
   createdAt: number;
   itemCount: number;
   cover: string | null;
 }
 
+export interface Project { id: string; name: string; color: string; createdAt: number }
+
 export interface Patch {
   title?: string;
+  background?: string | null;
+  projectId?: string | null;
   upsertItems?: Item[];
   removeItems?: string[];
   upsertConnections?: Connection[];
