@@ -35,6 +35,10 @@ Read README.md for features and configuration. This file covers conventions and 
 4. Client share links (view/comment) and per-project access
 5. Later: video compression and thumbnails (ffmpeg), version history, search
 
+## Branches
+- `main` is production: Railway deploys every commit on it. Never push to `main` directly.
+- Work on a feature branch and open a pull request into `main`; the owner reviews and merges.
+
 ## Conventions
 - Test UI changes in a real browser with Playwright (global install; Chromium at /opt/pw-browsers) before pushing.
 - When killing test servers, match `^node server/index.js`. Unanchored `pkill -f` patterns match the shell itself.
