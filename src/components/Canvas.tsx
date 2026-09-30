@@ -270,7 +270,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
       });
       x += w + 24;
       setUploads((u) => ({ ...u, [id]: 0 }));
-      api.upload(file, (p) => setUploads((u) => ({ ...u, [id]: p })))
+      api.upload(file, (p) => setUploads((u) => ({ ...u, [id]: p })), board.id)
         .then((r) => updateItem(id, { uploading: false, url: r.url, size: r.size, mime: r.mime, fileName: r.name }))
         .catch((err) => {
           notify(`${file.name}: ${err.message}`);
@@ -278,7 +278,7 @@ export function Canvas({ board, change, undo, redo, getBoard, boards, me, openBo
         })
         .finally(() => setUploads((u) => { const n = { ...u }; delete n[id]; return n; }));
     });
-  }, [addItem, change, freeSpot, notify, updateItem, viewportCenter]);
+  }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
 
   const pickFiles = (accept: string, at?: { x: number; y: number }) => {
     pendingFilePos.current = at ?? null;

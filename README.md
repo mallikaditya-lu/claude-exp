@@ -95,6 +95,20 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 | `DATA_DIR` | `./data` | Where boards (`boards/*.json`), projects (`projects.json`) and uploads (`uploads/`) are stored. Back up this folder. |
 | `APP_PASSWORD` | *(none)* | Shared team password. **Set this for anything reachable beyond your machine.** |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | *(none)* | Full contents of the service account's JSON key. With `GOOGLE_DRIVE_ID`, it turns on Google Drive storage. |
+| `GOOGLE_DRIVE_ID` | *(none)* | ID of the Shared Drive uploads go to |
+| `CACHE_MB` | `2048` | Local cache for small files served from Drive (images, PDFs) |
+
+### Storage: local disk or Google Drive
+
+Without Google settings, uploads are saved in `DATA_DIR/uploads`. With both Google variables set, they go to the **Google Shared Drive**, in one folder per project, and cost nothing beyond your Workspace storage:
+
+- Uploads are sent in 16 MB chunks, then pushed to Drive with Google's resumable protocol, so big videos survive flaky connections and proxy size limits.
+- Small files (under 25 MB) are cached on the server so boards open fast. Larger files stream from Drive with byte ranges, so video seeking works.
+- Card URLs are always `/uploads/<name>`, so files uploaded before Drive was switched on keep working.
+- Board data is backed up daily to `_Backups (board data)` on the Drive (the last 30 days are kept), or to `DATA_DIR/backups` in local mode.
+
+Check a Drive setup with `npm run drive:check`. `scripts/fake-google.mjs` is a stand-in Google server for testing without credentials (see CLAUDE.md).
 
 ## How it works
 

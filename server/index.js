@@ -1,5 +1,4 @@
 import express from 'express';
-import multer from 'multer';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +9,8 @@ import { Store } from './store.js';
 import { unfurl } from './unfurl.js';
 import { seedWelcomeBoard } from './seed.js';
 import { seedDemoProject } from './demo.js';
+import { Drive } from './drive.js';
+import { Files, safeHeaders } from './files.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -21,7 +22,26 @@ const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 500;
 const AUTH_COOKIE = 'rb_auth';
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const TMP_DIR = path.join(DATA_DIR, 'tmp');
+fs.rmSync(TMP_DIR, { recursive: true, force: true });
+fs.mkdirSync(TMP_DIR, { recursive: true });
 const store = new Store(DATA_DIR);
+
+// Google Drive storage is used when both variables are set; otherwise files stay on local disk.
+let drive = null;
+if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_DRIVE_ID) {
+  try {
+    drive = new Drive(process.env.GOOGLE_SERVICE_ACCOUNT_JSON, process.env.GOOGLE_DRIVE_ID);
+  } catch (err) {
+    console.error('Google Drive disabled:', err.message);
+  }
+}
+const files = new Files({ dataDir: DATA_DIR, uploadDir: UPLOAD_DIR, drive, cacheMb: Number(process.env.CACHE_MB) || 2048 });
+if (drive) {
+  drive.check()
+    .then((d) => console.log(`Google Drive connected: “${d.name}” as ${drive.email}`))
+    .catch((err) => console.error('Google Drive check FAILED — uploads will error until fixed:', err.message));
+}
 if (store.boards.size === 0) {
   seedWelcomeBoard(store);
   seedDemoProject(store, UPLOAD_DIR);
@@ -138,43 +158,94 @@ app.delete('/api/boards/:id', (req, res) => {
 });
 
 // ---------- uploads ----------
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
-    filename: (_req, file, cb) => {
-      // multer decodes names as latin1; re-decode so non-ASCII file names survive.
-      const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
-      file.originalname = original;
-      const ext = path.extname(original).toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 12);
-      const base = path.basename(original, path.extname(original)).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'file';
-      cb(null, `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}-${base}${ext}`);
-    },
-  }),
-  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
+// Files are sent in chunks (≤ 16 MB each) so large videos get past proxy request limits
+// (Cloudflare rejects single requests over 100 MB) and a flaky connection only retries one chunk.
+const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
+const sessions = new Map(); // id -> { path, size, received, name, mime, boardId, at }
+
+app.post('/api/uploads', (req, res) => {
+  const size = Number(req.body?.size);
+  const name = String(req.body?.name || 'file').slice(0, 200);
+  if (!Number.isFinite(size) || size < 0) return res.status(400).json({ error: 'Missing file size' });
+  if (size > MAX_UPLOAD) return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_MB} MB` });
+  const id = crypto.randomUUID();
+  const file = path.join(TMP_DIR, id);
+  fs.writeFileSync(file, '');
+  sessions.set(id, { path: file, size, received: 0, name, mime: String(req.body?.mime || 'application/octet-stream').slice(0, 100), boardId: req.body?.boardId || null, at: Date.now() });
+  res.status(201).json({ id, chunkSize: 16 * 1024 * 1024 });
 });
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
-  res.json({
-    url: `/uploads/${req.file.filename}`,
-    name: req.file.originalname,
-    size: req.file.size,
-    mime: req.file.mimetype,
-  });
+app.put('/api/uploads/:id', express.raw({ type: () => true, limit: '17mb' }), (req, res) => {
+  const s = sessions.get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Upload not found — please retry' });
+  const offset = Number(req.query.offset);
+  // A retried chunk the server already has is fine; anything else out of order is not.
+  if (offset + req.body.length <= s.received) return res.json({ received: s.received });
+  if (offset !== s.received) return res.status(409).json({ error: 'Out-of-order chunk', received: s.received });
+  if (s.received + req.body.length > s.size) return res.status(400).json({ error: 'More data than announced' });
+  fs.appendFileSync(s.path, req.body);
+  s.received += req.body.length;
+  s.at = Date.now();
+  res.json({ received: s.received });
 });
 
-const ACTIVE_EXT = new Set(['.html', '.htm', '.xhtml', '.svg', '.xml', '.js', '.mjs']);
-app.use('/uploads', express.static(UPLOAD_DIR, {
-  maxAge: '7d',
-  setHeaders(res, filePath) {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    // Uploaded files share our origin, so anything a browser could execute is served as a download.
-    if (ACTIVE_EXT.has(path.extname(filePath).toLowerCase())) {
-      res.setHeader('Content-Disposition', 'attachment');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-    }
-  },
-}));
+app.post('/api/uploads/:id/complete', async (req, res) => {
+  const s = sessions.get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Upload not found — please retry' });
+  if (s.received !== s.size) return res.status(400).json({ error: 'Upload incomplete', received: s.received });
+  sessions.delete(req.params.id);
+  // Drive folder per project, so files are easy to find in Google Drive too.
+  const board = s.boardId ? store.get(s.boardId) : null;
+  const project = board?.projectId ? store.projects.get(board.projectId) : null;
+  try {
+    const meta = await files.store(s.path, {
+      original: s.name,
+      mime: s.mime,
+      size: s.size,
+      folderKey: project ? project.id : 'unfiled',
+      folderName: project ? project.name : 'Unfiled',
+    });
+    res.json(meta);
+  } catch (err) {
+    fs.rm(s.path, { force: true }, () => {});
+    console.error('Upload failed:', err.message);
+    res.status(502).json({ error: files.mode === 'drive' ? 'Could not save to Google Drive — try again' : 'Could not save the file' });
+  }
+});
+
+app.delete('/api/uploads/:id', (req, res) => {
+  const s = sessions.get(req.params.id);
+  if (s) { sessions.delete(req.params.id); fs.rm(s.path, { force: true }, () => {}); }
+  res.json({ ok: true });
+});
+
+// Abandoned uploads are cleaned up after a day.
+setInterval(() => {
+  for (const [id, s] of sessions) {
+    if (Date.now() - s.at > 24 * 3600 * 1000) { sessions.delete(id); fs.rm(s.path, { force: true }, () => {}); }
+  }
+}, 3600 * 1000).unref();
+
+app.get('/api/storage', (_req, res) => {
+  res.json({ mode: files.mode, files: Object.keys(files.index.files).length });
+});
+
+// Local files first (also everything uploaded before Drive was switched on), then Drive.
+app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d', setHeaders: (res, filePath) => safeHeaders(res, filePath) }));
+app.get('/uploads/:name', (req, res) => files.serve(req, res));
+
+// ---------- backups ----------
+async function runBackup() {
+  try {
+    store.flushAll();
+    const name = await files.backup({ at: new Date().toISOString(), projects: store.listProjects(), boards: [...store.boards.values()] });
+    if (name) console.log(`Backup saved: ${name} (${files.mode})`);
+  } catch (err) {
+    console.error('Backup failed:', err.message);
+  }
+}
+setTimeout(runBackup, 60 * 1000).unref();
+setInterval(runBackup, 6 * 3600 * 1000).unref(); // at most one file per day; re-checks every 6h
 
 // ---------- link previews ----------
 app.get('/api/unfurl', async (req, res) => {
