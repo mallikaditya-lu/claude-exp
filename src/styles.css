@@ -740,3 +740,67 @@ table.people td { padding: 9px 8px; border-bottom: 1px solid var(--border); vert
 @media (max-width: 720px) {
   table.people th:nth-child(3), table.people td:nth-child(3) { display: none; }
 }
+
+/* ---------- board sharing ---------- */
+.share-section { padding: 4px 0 6px; }
+.share-section + .share-section { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+.share-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin-bottom: 8px; }
+.share-section-sub { font-size: 12px; color: var(--muted); font-weight: 600; margin: 4px 4px 2px; }
+.link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.link-row select { flex: 1; min-width: 220px; height: 36px; font-weight: 500; }
+.link-row.is-view select, .link-row.is-comment select { border-color: var(--accent); background: var(--accent-soft); }
+.link-row .btn { height: 36px; }
+.check-row { display: flex; gap: 10px; align-items: flex-start; margin: 12px 2px 0; font-size: 13.5px; cursor: pointer; }
+.check-row input { margin-top: 3px; accent-color: var(--accent); }
+.check-row small { display: block; font-size: 12px; color: var(--faint); }
+.text-btn { color: var(--accent); font-weight: 500; }
+.text-btn:hover { text-decoration: underline; }
+.share-row.compact { padding: 4px; }
+.share-row.is-inherited { opacity: 0.85; }
+.visitor-list { margin-top: 4px; }
+.splash.small { height: 120px; }
+.chip.is-board { background: var(--tint-blue); }
+.chip.is-off { opacity: 0.55; text-decoration: line-through; }
+.via-link {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent);
+}
+
+/* ---------- share link (client) view ---------- */
+.lu-mark {
+  width: 40px; height: 40px; border-radius: 10px; background: var(--text); color: var(--panel);
+  display: inline-grid; place-items: center; font-weight: 800; font-size: 14px; letter-spacing: -0.02em; flex: none;
+}
+.lu-mark.small { width: 28px; height: 28px; border-radius: 7px; font-size: 11px; }
+.share-gate { position: relative; max-width: 400px; }
+.gate-eyebrow { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.share-gate h1 { margin-top: 0; overflow-wrap: anywhere; }
+.gate-small { font-size: 12px; color: var(--faint); text-align: center; }
+.gate-close { position: absolute; top: 12px; right: 12px; }
+.share-app .topbar { gap: 8px; }
+.share-body { flex: 1; display: flex; min-height: 0; }
+.share-body .board-stage { flex: 1; }
+.btn.is-on { background: var(--hover); }
+.me-menu { position: relative; }
+.me-chip { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 3px; border-radius: 16px; font-weight: 500; font-size: 13px; }
+.me-chip:hover { background: var(--hover); }
+.me-menu .menu { right: 0; top: calc(100% + 4px); min-width: 200px; }
+.comments-panel {
+  width: 300px; flex: none; background: var(--panel); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.comments-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.comments-head b { flex: 1; }
+.comments-list { flex: 1; overflow: auto; padding: 6px; }
+.thread-row { display: flex; gap: 8px; width: 100%; text-align: left; padding: 8px; border-radius: 8px; align-items: flex-start; }
+.thread-row:hover { background: var(--hover); }
+.thread-main { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.thread-meta { font-size: 12px; color: var(--faint); }
+.thread-meta b { color: var(--text); }
+.thread-text { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.thread-replies { font-size: 12px; color: var(--accent); }
+@media (max-width: 720px) {
+  .comments-panel { position: absolute; right: 0; top: 52px; bottom: 0; z-index: 50; width: min(300px, 100%); box-shadow: var(--shadow-lg); }
+  .share-app .access-pill, .me-chip span { display: none; }
+}
+.menu-label.plain { text-transform: none; letter-spacing: 0; font-weight: 500; }

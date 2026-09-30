@@ -202,7 +202,7 @@ export class Store {
     return true;
   }
 
-  /** Removes someone from every project. Returns the names of the projects they were in. */
+  /** Removes someone from every project and board. Returns the names of what they were in. */
   removeMemberEverywhere(email) {
     const removed = [];
     for (const p of this.projects.values()) {
@@ -212,7 +212,82 @@ export class Store {
       }
     }
     if (removed.length) this.saveProjects();
+    for (const b of this.boards.values()) {
+      if (b.members?.[email]) {
+        delete b.members[email];
+        removed.push(b.title);
+        this.persist(b.id);
+      }
+    }
     return removed;
+  }
+
+  // ---------- board members (people invited to one board and the boards inside it) ----------
+  // board.members: { [email]: { role, invitedBy, invitedAt } }, same shape as project members.
+  setBoardMember(boardId, email, role, invitedBy) {
+    const b = this.boards.get(boardId);
+    if (!b) return null;
+    b.members ||= {};
+    const prev = b.members[email];
+    b.members[email] = { role, invitedBy: prev?.invitedBy || invitedBy, invitedAt: prev?.invitedAt || Date.now() };
+    this.persist(b.id);
+    return b;
+  }
+
+  removeBoardMember(boardId, email) {
+    const b = this.boards.get(boardId);
+    if (!b?.members?.[email]) return false;
+    delete b.members[email];
+    this.persist(b.id);
+    return true;
+  }
+
+  /** The board's parent, grandparent, … (nearest first). */
+  ancestors(id) {
+    const out = [];
+    let cur = this.boards.get(id);
+    while (cur?.parentId && out.length < 50) {
+      cur = this.boards.get(cur.parentId);
+      if (!cur) break;
+      out.push(cur);
+    }
+    return out;
+  }
+
+  /** True when `id` is `rootId` or nested (at any depth) inside it. */
+  isWithin(id, rootId) {
+    if (id === rootId) return true;
+    return this.ancestors(id).some((b) => b.id === rootId);
+  }
+
+  // ---------- share links ----------
+  // board.share: { token, mode: 'off' | 'view' | 'comment', requireIdentity, createdAt, createdBy }
+  setShare(boardId, { mode, requireIdentity }, by) {
+    const b = this.boards.get(boardId);
+    if (!b) return null;
+    b.share ||= { token: newToken(), mode: 'off', requireIdentity: true, createdAt: Date.now(), createdBy: by };
+    if (['off', 'view', 'comment'].includes(mode)) b.share.mode = mode;
+    if (typeof requireIdentity === 'boolean') b.share.requireIdentity = requireIdentity;
+    this.persist(b.id);
+    return b.share;
+  }
+
+  /** A new link; the old one stops working. */
+  resetShareToken(boardId) {
+    const b = this.boards.get(boardId);
+    if (!b?.share) return null;
+    b.share.token = newToken();
+    this.persist(b.id);
+    return b.share;
+  }
+
+  /** The board a share token belongs to, if the link is switched on. */
+  findShare(token) {
+    if (typeof token !== 'string' || token.length < 20) return null;
+    for (const b of this.boards.values()) {
+      if (b.share?.token && b.share.mode !== 'off' && safeEqual(b.share.token, token)) return { board: b, share: b.share };
+    }
+    return null;
   }
 
   // Deleting a project keeps its boards; they become unfiled.
@@ -258,6 +333,14 @@ export class Store {
       this.writeNow(id);
     }
   }
+}
+
+function newToken() {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+function safeEqual(a, b) {
+  return a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 function isRecord(x) {

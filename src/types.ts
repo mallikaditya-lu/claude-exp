@@ -3,7 +3,16 @@ export type ItemType =
   | 'board' | 'column' | 'image' | 'video' | 'audio' | 'file';
 
 export interface TodoEntry { id: string; text: string; done: boolean }
-export interface CommentEntry { id: string; author: string; text: string; at: number }
+export interface CommentEntry {
+  id: string;
+  author: string;
+  text: string;
+  at: number;
+  /** Set by the server for signed-in people and named link visitors. */
+  authorEmail?: string;
+  /** Written by someone who opened a share link (name and email typed in, not verified). */
+  viaLink?: boolean;
+}
 
 export interface Item {
   id: string;
@@ -104,6 +113,22 @@ export interface Project {
   myLevel?: Access | null;
   /** Only sent to the core team. */
   members?: ProjectMember[];
+}
+
+export type LinkMode = 'off' | 'view' | 'comment';
+
+export interface BoardSharing {
+  boardId: string;
+  project: { id: string; name: string } | null;
+  /** Invited to this board directly. */
+  members: ProjectMember[];
+  /** Access that comes from a parent board or the project. */
+  inherited: (ProjectMember & { from: { type: 'board' | 'project'; id: string; name: string } })[];
+  link: { mode: LinkMode; requireIdentity: boolean; url: string | null };
+  /** Parent boards whose share link also covers this board. */
+  parentLinks: { id: string; title: string; mode: LinkMode }[];
+  linkVisitors: { name: string; email: string; lastSeen: number }[];
+  shareHostMissing: boolean;
 }
 
 export interface Patch {

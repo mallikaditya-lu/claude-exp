@@ -1,4 +1,4 @@
-import type { Board, BoardSummary, GlobalRole, MemberRole, Patch, Project } from './types';
+import type { Board, BoardSharing, BoardSummary, GlobalRole, LinkMode, MemberRole, Patch, Project } from './types';
 
 export const clientId = crypto.randomUUID();
 
@@ -22,6 +22,28 @@ export interface Session {
   user: { email: string; name: string; role: GlobalRole } | null;
   role: GlobalRole | null;
   publicUrl: string;
+  /** False when share links can't work yet (Cloudflare mode without SHARE_URL). */
+  shareLinks?: boolean;
+}
+
+/** What someone opening a share link gets told about it. */
+export interface ShareInfo {
+  boardId: string;
+  title: string;
+  mode: Exclude<LinkMode, 'off'>;
+  requireIdentity: boolean;
+  visitor: { name: string; email: string } | null;
+  /** Set when the person is signed in and has their own access to the board. */
+  member: string | null;
+}
+
+export interface AdminVisitor {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: number;
+  lastSeen: number;
+  boards: { id: string; name: string; at: number; link: LinkMode }[];
 }
 
 export interface AdminPerson {
@@ -33,10 +55,12 @@ export interface AdminPerson {
   pending?: boolean;
   removedForInactivity: { at: number; projects: string[] } | null;
   projects: { id: string; name: string; role: MemberRole }[];
+  boards: { id: string; name: string; role: MemberRole }[];
 }
 
 export interface AdminData {
   people: AdminPerson[];
+  visitors: AdminVisitor[];
   settings: { inactiveDays: number };
   adminEmails: string[];
   teamDomains: string[];
@@ -70,6 +94,19 @@ export const api = {
   removePerson: (email: string) => req<{ ok: boolean }>(`/api/admin/people/${encodeURIComponent(email)}`, { method: 'DELETE' }),
   updateSettings: (settings: Partial<AdminData['settings']>) =>
     req<AdminData['settings']>('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(settings) }),
+  sharing: (boardId: string) => req<BoardSharing>(`/api/boards/${boardId}/sharing`),
+  setLink: (boardId: string, fields: { mode?: LinkMode; requireIdentity?: boolean }) =>
+    req<BoardSharing>(`/api/boards/${boardId}/share`, { method: 'PUT', body: JSON.stringify(fields) }),
+  resetLink: (boardId: string) => req<BoardSharing>(`/api/boards/${boardId}/share/reset`, { method: 'POST' }),
+  setBoardMember: (boardId: string, email: string, role: MemberRole) =>
+    req<BoardSharing>(`/api/boards/${boardId}/members/${encodeURIComponent(email)}`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  removeBoardMember: (boardId: string, email: string) =>
+    req<BoardSharing>(`/api/boards/${boardId}/members/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  openShare: (token: string) => req<ShareInfo>(`/api/share/${encodeURIComponent(token)}`),
+  identify: (token: string, name: string, email: string) =>
+    req<ShareInfo>(`/api/share/${encodeURIComponent(token)}/identify`, { method: 'POST', body: JSON.stringify({ name, email }) }),
+  forgetMe: () => req<{ ok: boolean }>('/api/share-forget', { method: 'POST' }),
+  removeVisitor: (id: string) => req<{ ok: boolean }>(`/api/admin/visitors/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
@@ -174,6 +211,11 @@ class Socket {
 
   send(msg: object) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  }
+
+  /** Reconnect so the server re-reads who this is (after a link visitor gives their name). */
+  reconnect() {
+    this.ws?.close();
   }
 
   join(boardId: string | null) {

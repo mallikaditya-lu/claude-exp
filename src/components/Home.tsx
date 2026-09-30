@@ -28,7 +28,9 @@ interface Props {
 export function Home(props: Props) {
   const { boards, projects, projectId, me, onOpenProject, onCreate, onCreateProject, sidebarOpen, toggleSidebar, isTeam, onShare } = props;
   const project = projectId ? projects.find((p) => p.id === projectId) : null;
-  const topLevel = boards.filter((b) => !b.parentId).sort((a, b) => b.updatedAt - a.updatedAt);
+  // Top level = boards whose parent this person can't see (for guests invited to a sub-board, that board).
+  const visible = new Set(boards.map((b) => b.id));
+  const topLevel = boards.filter((b) => !b.parentId || !visible.has(b.parentId)).sort((a, b) => b.updatedAt - a.updatedAt);
   const nestedCount = (id: string) => boards.filter((b) => b.parentId === id).length;
 
   const tile = (b: BoardSummary) => (
@@ -112,12 +114,12 @@ export function Home(props: Props) {
         <p className="home-sub">
           {isTeam
             ? 'Collect references, structure research and share it with the team — notes, links, video, music, tables and to-dos on one canvas.'
-            : projects.length
-              ? 'These are the projects Little Unusual has shared with you.'
-              : 'Nothing has been shared with you yet. When the Little Unusual team invites you to a project, it will appear here.'}
+            : projects.length || unfiled.length
+              ? 'These are the projects and boards Little Unusual has shared with you.'
+              : 'Nothing has been shared with you yet. When the Little Unusual team invites you to a project or board, it will appear here.'}
         </p>
 
-        <h2 className="home-h2">{isTeam ? 'Projects' : 'Shared with you'}</h2>
+        {(isTeam || projects.length > 0) && <h2 className="home-h2">{isTeam ? 'Projects' : 'Projects shared with you'}</h2>}
         <div className="project-grid">
           {projects.map((p) => {
             const list = topLevel.filter((b) => b.projectId === p.id);
@@ -156,6 +158,13 @@ export function Home(props: Props) {
             </button>
           )}
         </div>
+
+        {!isTeam && unfiled.length > 0 && (
+          <>
+            <h2 className="home-h2">Boards shared with you</h2>
+            <div className="board-grid">{unfiled.map(tile)}</div>
+          </>
+        )}
 
         {recent.length > 0 && (
           <>
