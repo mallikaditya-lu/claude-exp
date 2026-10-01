@@ -58,6 +58,8 @@ export interface Item {
   source?: string;
   todos?: TodoEntry[];
   table?: string[][];
+  /** Table column widths, as percentages of the table width. */
+  colWidths?: number[];
   boardId?: string;
   childIds?: string[];
   /** Groups (type 'column'): columns in the grid. 0 = auto (fits the width); unset = 1 (older columns). */

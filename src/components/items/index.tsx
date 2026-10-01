@@ -1,7 +1,8 @@
 import type { CardProps } from '../CanvasContext';
 import { BoardCard, ColumnCard } from './Containers';
 import { LinkCard } from './LinkCard';
-import { TableCard, TodoCard } from './ListCards';
+import { TodoCard } from './ListCards';
+import { TableCard } from './TableCard';
 import { AudioCard, FileCard, ImageCard, VideoCard } from './MediaCards';
 import { HeadingCard, NoteCard } from './TextCards';
 

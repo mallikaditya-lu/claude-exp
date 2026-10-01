@@ -1231,6 +1231,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
 
   const ctx: CanvasCtx = {
     me,
+    boardId: board.id,
+    notify,
     items,
     boards,
     uploadProgress: uploads,

@@ -3,6 +3,8 @@ import type { BoardSummary, Item } from '../types';
 
 export interface CanvasCtx {
   me: string;
+  boardId: string;
+  notify: (msg: string) => void;
   items: Record<string, Item>;
   boards: Record<string, BoardSummary>;
   uploadProgress: Record<string, number>;
