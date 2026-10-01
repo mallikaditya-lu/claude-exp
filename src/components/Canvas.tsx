@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, socket } from '../api';
-import { COLORS, color, isInColumn, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
+import { COLORS, color, imageFromHtml, isInColumn, isMediaUrl, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
 import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
 import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
@@ -334,6 +334,44 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         .finally(() => setUploads((u) => { const n = { ...u }; delete n[id]; return n; }));
     });
   }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
+
+  /**
+   * Bring in an image/GIF/video from the web by its original address, so GIFs stay animated.
+   * Falls back to the still image the browser offered (if any), or to a link card.
+   */
+  const importFromWeb = useCallback((url: string, at?: { x: number; y: number }, fallback?: File) => {
+    // Our own files (copied from another board) need no import.
+    if (url.startsWith(`${location.origin}/uploads/`)) {
+      addItem('image', at, { url: url.slice(location.origin.length) });
+      setEditingId(null);
+      return;
+    }
+    const pos = at ?? freeSpot(viewportCenter(), 360, 260);
+    const looksVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+    const id = addItem(looksVideo ? 'video' : 'image', pos, { uploading: true, fileName: `Importing from ${new URL(url).hostname.replace(/^www\./, '')}` });
+    setEditingId(null);
+    const drop = () => change((b) => { const next = { ...b.items }; delete next[id]; return { ...b, items: next }; });
+    api.importUrl(url, board.id)
+      .then((r) => {
+        if (!r.media) {
+          drop();
+          if (fallback) addFiles([fallback], pos);
+          else addItem('link', pos, { url });
+          return;
+        }
+        const type = kindForMime(r.mime, r.name);
+        // A GIF that arrives as video (Giphy, Tenor) keeps behaving like a GIF.
+        const loop = type === 'video' && !looksVideo;
+        updateItem(id, { type, uploading: false, url: r.url, size: r.size, mime: r.mime, fileName: r.name, source: r.sourceUrl, ...(loop ? { loop: true } : {}) });
+      })
+      .catch((err) => {
+        drop();
+        if (fallback) addFiles([fallback], pos);
+        // The site refused our server (hotlink protection etc.): show it straight from the site.
+        else if (/\.(gif|webp|png|jpe?g|avif)(\?|$)/i.test(url)) { addItem('image', pos, { url, source: url }); notify('Couldn’t save a copy, so this image loads from the original site'); }
+        else { addItem('link', pos, { url }); notify(err.message); }
+      });
+  }, [addFiles, addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
 
   const pickFiles = (accept: string, at?: { x: number; y: number }) => {
     pendingFilePos.current = at ?? null;
@@ -817,9 +855,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const tool = e.dataTransfer.getData(TOOL_MIME) as Tool;
     if (tool) { applyTool(tool, p); return; }
     const files = [...e.dataTransfer.files];
+    // Dragged from a website: use the original image (keeps GIFs animated).
+    const webImage = imageFromHtml(e.dataTransfer.getData('text/html'));
+    if (webImage) { importFromWeb(webImage, p, files[0]); return; }
     if (files.length) { addFiles(files, p); return; }
     const uri = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')).split('\n')[0]?.trim();
-    if (uri && isUrl(uri)) addItem('link', p, { url: uri });
+    if (uri && isUrl(uri) && isMediaUrl(uri)) importFromWeb(uri, p);
+    else if (uri && isUrl(uri)) addItem('link', p, { url: uri });
     else if (uri) addItem('note', p, { text: textToHtml(uri) });
   };
 
@@ -838,6 +880,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const paste = (e: ClipboardEvent) => {
       if (!canEdit || isTyping(e.target) || isTyping(document.activeElement)) return;
       const files = [...(e.clipboardData?.files || [])];
+      // "Copy image" on a website puts a still PNG on the clipboard, plus HTML pointing at the
+      // original. Import the original so GIFs and WebPs stay animated; the PNG is the fallback.
+      const webImage = imageFromHtml(e.clipboardData?.getData('text/html') || '');
+      if (webImage) { e.preventDefault(); importFromWeb(webImage, undefined, files[0]); return; }
       if (files.length) { e.preventDefault(); addFiles(files); return; }
       const text = e.clipboardData?.getData('text/plain')?.trim();
       if (!text) return;
@@ -853,7 +899,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         } catch { notify('Could not paste those cards'); }
         return;
       }
-      if (isUrl(text)) addItem('link', undefined, { url: text });
+      if (isUrl(text) && isMediaUrl(text)) importFromWeb(text);
+      else if (isUrl(text)) addItem('link', undefined, { url: text });
       else addItem('note', undefined, { text: textToHtml(text) });
       setEditingId(null);
     };
@@ -865,7 +912,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       document.removeEventListener('cut', cut);
       document.removeEventListener('paste', paste);
     };
-  }, [addFiles, addItem, collectSelection, deleteSelection, insertClones, notify, viewportCenter]);
+  }, [addFiles, addItem, collectSelection, deleteSelection, importFromWeb, insertClones, notify, viewportCenter]);
 
   // ---------- keyboard ----------
   useEffect(() => {

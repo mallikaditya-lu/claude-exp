@@ -50,8 +50,9 @@ export async function unfurl(rawUrl) {
   return meta;
 }
 
-async function assertPublic(url) {
+export async function assertPublic(url) {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Only http(s) links can be previewed');
+  if (process.env.TEST_ALLOW_PRIVATE_FETCH === '1') return; // local tests only: never set in production
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const addrs = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true });
   if (!addrs.length || addrs.some((a) => isPrivate(a.address))) throw new Error('Host is not public');
@@ -84,7 +85,7 @@ async function readCapped(res) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function parseMeta(html) {
+export function parseMeta(html) {
   const out = {};
   for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
     const key = attr(tag, 'property') || attr(tag, 'name');

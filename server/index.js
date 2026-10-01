@@ -15,6 +15,7 @@ import { AccessVerifier } from './access.js';
 import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
 import { Permissions, MEMBER_ROLES, atLeast, isOwnComment } from './permissions.js';
 import { Visitors } from './visitors.js';
+import { importMedia } from './importer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -480,8 +481,8 @@ app.get('/api/boards/:id', (req, res) => {
   const board = store.get(req.params.id);
   // Same answer for "missing" and "not yours", so board ids can't be probed.
   if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
-  // Invites and the secret link are only for the Share dialog.
-  const { members: _m, share: _s, ...rest } = board;
+  // Invites and the secret link are only for the Share dialog; assets have their own endpoint.
+  const { members: _m, share: _s, assets: _a, ...rest } = board;
   res.json({ ...rest, access: perms.boardLevel(req.user, board) });
 });
 
@@ -704,13 +705,49 @@ app.post('/api/uploads/:id/complete', async (req, res) => {
       folderKey: project ? project.id : 'unfiled',
       folderName: project ? project.name : 'Unfiled',
     });
-    if (!recentUploads.has(s.owner)) recentUploads.set(s.owner, new Set());
-    recentUploads.get(s.owner).add(meta.url);
+    stored(req, board, meta);
     res.json(meta);
   } catch (err) {
     fs.rm(s.path, { force: true }, () => {});
     console.error('Upload failed:', err.message);
     res.status(502).json({ error: files.mode === 'drive' ? 'Could not save to Google Drive — try again' : 'Could not save the file' });
+  }
+});
+
+/** After a file is saved: the uploader can load it straight away, and the board remembers it. */
+function stored(req, board, meta) {
+  const owner = ownerKey(req.user);
+  if (!recentUploads.has(owner)) recentUploads.set(owner, new Set());
+  recentUploads.get(owner).add(meta.url);
+  if (board) store.addAsset(board.id, { ...meta, at: Date.now(), by: req.user.name || req.user.email || 'Someone' });
+}
+
+// Paste/drop from a website, or a pasted image link: fetch the original file (so GIFs stay
+// animated) and store it like an upload. Answers { media: false } for ordinary web pages.
+app.post('/api/import-url', async (req, res) => {
+  const board = req.body?.boardId ? store.get(req.body.boardId) : null;
+  if (!board || !perms.can(req.user, board, 'edit')) return res.status(403).json({ error: 'You can’t add files to this board' });
+  let url;
+  try { url = new URL(String(req.body?.url || '')); } catch { return res.status(400).json({ error: 'That isn’t a link' }); }
+  let got = null;
+  try {
+    got = await importMedia(url.href, TMP_DIR, MAX_UPLOAD);
+  } catch (err) {
+    return res.status(422).json({ error: `Couldn’t fetch that file: ${err.message}` });
+  }
+  if (!got) return res.json({ media: false });
+  const project = board.projectId ? store.projects.get(board.projectId) : null;
+  try {
+    const meta = await files.store(got.path, {
+      original: got.name, mime: got.mime, size: got.size,
+      folderKey: project ? project.id : 'unfiled', folderName: project ? project.name : 'Unfiled',
+    });
+    stored(req, board, meta);
+    res.json({ media: true, ...meta, sourceUrl: got.sourceUrl });
+  } catch (err) {
+    fs.rm(got.path, { force: true }, () => {});
+    console.error('Import failed:', err.message);
+    res.status(502).json({ error: 'Could not save the file' });
   }
 });
 

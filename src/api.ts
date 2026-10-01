@@ -130,6 +130,8 @@ export const api = {
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
+  importUrl: (url: string, boardId: string) =>
+    req<{ media: false } | ({ media: true; sourceUrl: string } & UploadResult)>('/api/import-url', { method: 'POST', body: JSON.stringify({ url, boardId }) }),
   unfurl: (url: string) => req<LinkMeta>(`/api/unfurl?url=${encodeURIComponent(url)}`),
   /**
    * Upload in chunks: small requests get past proxy size limits, and a dropped connection

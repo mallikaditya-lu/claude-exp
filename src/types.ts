@@ -52,6 +52,10 @@ export interface Item {
   mime?: string;
   caption?: string;
   uploading?: boolean;
+  /** Video that behaves like a GIF: plays muted on a loop, no controls (e.g. imported from Giphy). */
+  loop?: boolean;
+  /** Where an imported file came from. */
+  source?: string;
   todos?: TodoEntry[];
   table?: string[][];
   boardId?: string;

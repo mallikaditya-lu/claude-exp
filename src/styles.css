@@ -498,7 +498,7 @@ input, textarea { user-select: text; }
 .embed-shield { position: absolute; inset: 0; cursor: default; }
 
 .image-card { border-radius: var(--radius); overflow: hidden; }
-.image-card img { width: 100%; display: block; background: var(--hover); min-height: 40px; }
+.image-card img, .image-card video { width: 100%; display: block; background: var(--hover); min-height: 40px; }
 .caption { padding: 8px 12px; font-size: 13px; color: var(--muted); }
 .caption-input { width: 100%; border: 0; outline: none; padding: 8px 12px; background: transparent; font-size: 13px; }
 

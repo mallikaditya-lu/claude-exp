@@ -96,6 +96,25 @@ export function textToHtml(text: string) {
   return text.split(/\n/).map((l) => `<p>${esc(l) || '<br>'}</p>`).join('');
 }
 
+/** Links that are (or lead straight to) an image, GIF or video: these get imported, not shown as link cards. */
+export function isMediaUrl(s: string) {
+  try {
+    const u = new URL(s.trim());
+    if (/\.(gif|webp|png|jpe?g|avif|mp4|webm|mov|m4v)$/i.test(u.pathname)) return true;
+    return /(^|\.)(giphy\.com|tenor\.com|gfycat\.com)$/i.test(u.hostname) || /^i\.imgur\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** The original image a website put on the clipboard / drag (browsers also add a re-encoded PNG). */
+export function imageFromHtml(html: string) {
+  if (!html || !/<img/i.test(html)) return '';
+  const img = new DOMParser().parseFromString(html, 'text/html').querySelector('img');
+  const src = img?.getAttribute('src') || img?.getAttribute('data-src') || '';
+  return /^https?:\/\//i.test(src) ? src : '';
+}
+
 export function kindForMime(mime: string, name = ''): Item['type'] {
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
