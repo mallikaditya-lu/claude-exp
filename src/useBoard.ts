@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socket } from './api';
 import { applyPatch, diffBoards } from './lib';
-import type { Board, PresenceUser } from './types';
+import type { Board, Patch, PresenceUser } from './types';
 
 export type SaveStatus = 'loading' | 'saved' | 'saving' | 'offline' | 'missing';
 
@@ -156,5 +156,13 @@ export function useBoard(boardId: string) {
 
   const getBoard = useCallback(() => current.current, []);
 
-  return { board, status, presence, change, undo, redo, getBoard };
+  /** Apply something the server already saved (comment threads), without sending it back. */
+  const applyServerPatch = useCallback((patch: Patch) => {
+    if (!current.current || !saved.current) return;
+    saved.current = applyPatch(saved.current, patch);
+    current.current = applyPatch(current.current, patch);
+    setBoard(current.current);
+  }, []);
+
+  return { board, status, presence, change, undo, redo, getBoard, applyServerPatch };
 }

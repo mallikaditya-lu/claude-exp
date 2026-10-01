@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, clientId, socket, type ShareInfo } from '../api';
-import { background, timeAgo } from '../lib';
-import type { BoardSummary, Item } from '../types';
+import { background } from '../lib';
+import type { BoardSummary } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconX } from './icons';
+import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
+import { IconChevron, IconComment, IconX } from './icons';
 
 /**
  * What someone sees when they open a share link (/s/<token>): no sign-in, just a name and email
@@ -175,10 +176,7 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
   boardId: string; rootId: string; boards: Record<string, BoardSummary>; me: string; info: ShareInfo;
   go: (id: string) => void; notify: (msg: string) => void; onAskIdentity: () => void; onForget: () => void;
 }) {
-  const { board, status, presence, change, undo, redo, getBoard } = useBoard(boardId);
-  const [panel, setPanel] = useState(false);
-  const [mineOnly, setMineOnly] = useState(false);
-  const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
+  const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
   const [menu, setMenu] = useState(false);
 
   // Breadcrumbs stop at the shared board: nothing above it was shared.
@@ -192,20 +190,10 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
     }
   }
 
-  const threads = useMemo(() => {
-    if (!board) return [];
-    const email = info.visitor?.email;
-    return Object.values(board.items)
-      .filter((it): it is Item & { comments: NonNullable<Item['comments']> } => it.type === 'comment' && Boolean(it.comments?.length))
-      .map((it) => ({
-        item: it,
-        mine: it.comments.some((c) => (email && c.authorEmail === email && c.viaLink) || (!c.authorEmail && c.author === me)),
-        last: Math.max(...it.comments.map((c) => c.at)),
-      }))
-      .sort((a, b) => b.last - a.last);
-  }, [board, info.visitor, me]);
-  const shown = mineOnly ? threads.filter((t) => t.mine) : threads;
-  const mineCount = threads.filter((t) => t.mine).length;
+  const [comments, setComments] = useCommentUi();
+  const actions = useCommentActions(boardId, applyServerPatch, notify);
+  const identity: Identity = useMemo(() => ({ name: me, email: info.visitor?.email || null, visitor: true }), [me, info.visitor]);
+  const openCount = Object.values(board?.threads || {}).filter((t) => !t.resolved).length;
 
   const others = presence.filter((p) => p.clientId !== clientId);
   const access = board?.access || 'view';
@@ -243,8 +231,8 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
         <span className="access-pill" title={access === 'comment' ? 'You can view this board and leave comments' : 'You can view this board'}>
           {access === 'comment' ? 'Can comment' : 'View only'}
         </span>
-        <button className={`btn ${panel ? 'is-on' : ''}`} onClick={() => setPanel((p) => !p)}>
-          Comments{threads.length ? ` · ${threads.length}` : ''}
+        <button className={`btn ${comments.panel ? 'is-on' : ''}`} onClick={() => setComments((u) => ({ ...u, panel: !u.panel }))}>
+          <IconComment size={15} /> Comments{openCount ? ` · ${openCount}` : ''}
         </button>
         {info.mode === 'comment' && !info.visitor && (
           <button className="btn primary" onClick={onAskIdentity}>Add your name to comment</button>
@@ -266,7 +254,7 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
           <button className="btn" onClick={onAskIdentity}>Add your name</button>
         )}
       </header>
-      <div className="share-body">
+      <div className="board-body">
         <div
           className={`board-stage ${bg.dark ? 'theme-dark' : 'theme-light'}`}
           style={{ ['--canvas' as string]: bg.canvas, ['--dot' as string]: bg.dot }}
@@ -284,44 +272,24 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
               openBoard={go}
               notify={notify}
               access={access}
-              focus={focus}
+              comments={{ ui: comments, setUi: setComments, me: identity, actions }}
             />
           ) : (
             <div className="splash"><div className="spinner" /></div>
           )}
         </div>
-        {panel && (
-          <aside className="comments-panel">
-            <div className="comments-head">
-              <b>Comments</b>
-              <div className="seg">
-                <button className={mineOnly ? '' : 'is-on'} onClick={() => setMineOnly(false)}>All {threads.length}</button>
-                <button className={mineOnly ? 'is-on' : ''} onClick={() => setMineOnly(true)}>Yours {mineCount}</button>
-              </div>
-              <button className="icon-btn" onClick={() => setPanel(false)} aria-label="Close"><IconX size={15} /></button>
-            </div>
-            <div className="comments-list">
-              {shown.map(({ item, last }) => {
-                const first = item.comments[0];
-                return (
-                  <button key={item.id} className="thread-row" onClick={() => setFocus((f) => ({ id: item.id, n: (f?.n || 0) + 1 }))}>
-                    <Avatar name={first.author} size={26} />
-                    <span className="thread-main">
-                      <span className="thread-meta"><b>{first.author}</b> · {timeAgo(last)}</span>
-                      <span className="thread-text">{first.text}</span>
-                      {item.comments.length > 1 && <span className="thread-replies">{item.comments.length - 1} repl{item.comments.length === 2 ? 'y' : 'ies'}</span>}
-                    </span>
-                  </button>
-                );
-              })}
-              {!shown.length && (
-                <div className="share-empty">
-                  {mineOnly ? 'You haven’t commented on this board yet.' : 'No comments on this board yet.'}
-                  {access === 'comment' && <> Use the <b>Comment</b> tool at the bottom, or press <kbd>M</kbd>.</>}
-                </div>
-              )}
-            </div>
-          </aside>
+        {comments.panel && (
+          <CommentsPanel
+            board={board}
+            access={access}
+            ui={comments}
+            setUi={setComments}
+            me={identity}
+            actions={actions}
+            hint={info.mode === 'comment' && !info.visitor && (
+              <div><button className="btn primary small panel-cta" onClick={onAskIdentity}>Add your name to comment</button></div>
+            )}
+          />
         )}
       </div>
     </div>

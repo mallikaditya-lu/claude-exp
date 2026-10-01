@@ -21,7 +21,10 @@ export class Store {
       if (!f.endsWith('.json')) continue;
       try {
         const b = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8'));
-        if (b && b.id) this.boards.set(b.id, b);
+        if (b && b.id) {
+          this.boards.set(b.id, b);
+          if (migrateComments(b).items.length) this.persist(b.id);
+        }
       } catch (err) {
         console.error(`Could not read board ${f}:`, err.message);
       }
@@ -43,6 +46,7 @@ export class Store {
       createdAt: b.createdAt,
       itemCount: items.length,
       cover,
+      openComments: Object.values(b.threads || {}).filter((t) => !t.resolved).length,
     };
   }
 
@@ -66,6 +70,7 @@ export class Store {
       background: parent?.background || null,
       items,
       connections,
+      threads: {},
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -117,10 +122,40 @@ export class Store {
       clean.removeConnections = patch.removeConnections.filter((x) => typeof x === 'string');
       for (const cid of clean.removeConnections) delete board.connections[cid];
     }
+    // Old-style comment cards (seed data, or a browser still running the old app) become pinned threads.
+    const migrated = migrateComments(board);
+    if (migrated.items.length) {
+      const gone = new Set(migrated.items);
+      clean.upsertItems = (clean.upsertItems || []).filter((it) => !gone.has(it.id));
+      clean.upsertThreads = migrated.threads;
+      clean.removeItems = [...(clean.removeItems || []), ...migrated.items];
+      clean.removeConnections = [...(clean.removeConnections || []), ...migrated.connections];
+    }
     board.version += 1;
     board.updatedAt = Date.now();
     this.persist(id);
     return { board, patch: clean };
+  }
+
+  // ---------- comment threads (pinned on the canvas, saved separately from cards) ----------
+  // board.threads: { [id]: { id, x, y, itemId?, dx?, dy?, createdAt, resolved: { by, at } | null, comments: [...] } }
+  saveThread(boardId, thread) {
+    const board = this.boards.get(boardId);
+    if (!board) return null;
+    board.threads ||= {};
+    board.threads[thread.id] = thread;
+    board.version += 1;
+    this.persist(boardId);
+    return board;
+  }
+
+  removeThread(boardId, threadId) {
+    const board = this.boards.get(boardId);
+    if (!board?.threads?.[threadId]) return null;
+    delete board.threads[threadId];
+    board.version += 1;
+    this.persist(boardId);
+    return board;
   }
 
   // Deletes a board and every board nested beneath it. Returns the deleted ids.
@@ -333,6 +368,47 @@ export class Store {
       this.writeNow(id);
     }
   }
+}
+
+/**
+ * Turns comment cards into pinned comment threads. A card connected to another card by a line is
+ * pinned to that card (and the line removed); otherwise the pin goes where the card was.
+ * Returns what changed: { threads, items (removed ids), connections (removed ids) }.
+ */
+export function migrateComments(board) {
+  const out = { threads: [], items: [], connections: [] };
+  board.threads ||= {};
+  for (const it of Object.values(board.items || {})) {
+    if (it.type !== 'comment') continue;
+    const lines = Object.values(board.connections || {}).filter((c) => c.from === it.id || c.to === it.id);
+    const target = lines.map((c) => board.items[c.from === it.id ? c.to : c.from]).find((t) => t && t.type !== 'comment');
+    const thread = {
+      id: it.id,
+      x: Math.round(it.x),
+      y: Math.round(it.y),
+      createdAt: it.createdAt || it.comments?.[0]?.at || Date.now(),
+      resolved: null,
+      comments: (it.comments || []).filter((c) => c && typeof c.text === 'string'),
+    };
+    if (target && !target.parentId) {
+      thread.itemId = target.id;
+      thread.dx = Math.max(16, (target.w || 260) - 16);
+      thread.dy = Math.min(320, Math.max(16, Math.round(it.y - target.y) + 24));
+      thread.x = Math.round(target.x + thread.dx);
+      thread.y = Math.round(target.y + thread.dy);
+    }
+    delete board.items[it.id];
+    out.items.push(it.id);
+    for (const c of lines) { delete board.connections[c.id]; out.connections.push(c.id); }
+    for (const other of Object.values(board.items)) {
+      if (other.childIds?.includes(it.id)) other.childIds = other.childIds.filter((x) => x !== it.id);
+    }
+    if (thread.comments.length) {
+      board.threads[thread.id] = thread;
+      out.threads.push(thread);
+    }
+  }
+  return out;
 }
 
 function newToken() {

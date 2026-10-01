@@ -1,5 +1,5 @@
 export type ItemType =
-  | 'note' | 'heading' | 'link' | 'todo' | 'table' | 'comment'
+  | 'note' | 'heading' | 'link' | 'todo' | 'table'
   | 'board' | 'column' | 'image' | 'video' | 'audio' | 'file';
 
 export interface TodoEntry { id: string; text: string; done: boolean }
@@ -12,6 +12,22 @@ export interface CommentEntry {
   authorEmail?: string;
   /** Written by someone who opened a share link (name and email typed in, not verified). */
   viaLink?: boolean;
+  editedAt?: number;
+}
+
+/** A Figma-style comment pin: on a card (moves with it) or at a spot on the board. */
+export interface Thread {
+  id: string;
+  /** Board position of the pin's point (also the fallback if its card is deleted). */
+  x: number;
+  y: number;
+  itemId?: string | null;
+  /** Offset from the card's top-left corner. */
+  dx?: number | null;
+  dy?: number | null;
+  createdAt: number;
+  resolved: { by: string; byEmail?: string | null; at: number } | null;
+  comments: CommentEntry[];
 }
 
 export interface Item {
@@ -81,6 +97,7 @@ export interface Board {
   background?: string | null;
   items: Record<string, Item>;
   connections: Record<string, Connection>;
+  threads?: Record<string, Thread>;
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -96,6 +113,7 @@ export interface BoardSummary {
   createdAt: number;
   itemCount: number;
   cover: string | null;
+  openComments?: number;
 }
 
 export type Access = 'manage' | 'edit' | 'comment' | 'view';
@@ -139,6 +157,9 @@ export interface Patch {
   removeItems?: string[];
   upsertConnections?: Connection[];
   removeConnections?: string[];
+  /** Comment threads only ever arrive from the server (they're saved through their own API). */
+  upsertThreads?: Thread[];
+  removeThreads?: string[];
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }

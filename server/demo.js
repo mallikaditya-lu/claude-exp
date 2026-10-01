@@ -474,7 +474,7 @@ export function seedDemoProject(store, uploadDir) {
     const t = B.add({ type: 'heading', x: 380, y: 0, w: 360, text: 'How we work', color: 'blue' });
     const n1 = B.add({ type: 'note', x: 0, y: 110, w: 340, text: '<h2>1 · One board per phase</h2>' + p('Research → Moodboard → Script → Music → Shoot → Post. The hub links them all.') });
     const n2 = B.add({ type: 'note', x: 380, y: 110, w: 340, text: '<h2>2 · Decisions live on the board</h2>' + p('Mark a decision with a ' + b('green note') + ' and connect it to the options it chose between.') });
-    const n3 = B.add({ type: 'note', x: 760, y: 110, w: 340, text: '<h2>3 · Feedback as comments</h2>' + p('Clients comment directly next to the cut. Draw a red line to the exact moment.') });
+    const n3 = B.add({ type: 'note', x: 760, y: 110, w: 340, text: '<h2>3 · Feedback as comments</h2>' + p('Clients pin comments straight onto the cut, and the team resolves them as changes land.') });
     [n1, n2, n3].forEach((n) => B.line(t, n, { color: 'blue' }));
     B.line(n1, n2, { shape: 'straight', arrow: 'none', dash: true });
     B.line(n2, n3, { shape: 'straight', arrow: 'none', dash: true });

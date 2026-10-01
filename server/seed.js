@@ -72,7 +72,7 @@ export function seedWelcomeBoard(store) {
 
   add({
     type: 'comment', x: 860, y: 520, w: 260, color: 'yellow',
-    comments: [{ id: id(), author: 'Reference Board', text: 'Leave feedback for the team here. Press Enter to post.', at: Date.now() }],
+    comments: [{ id: id(), author: 'Reference Board', text: 'Comments pin to the board like in Figma. Press M (or the Comment tool), then click anywhere, or on a card.', at: Date.now() }],
   });
 
   add({
