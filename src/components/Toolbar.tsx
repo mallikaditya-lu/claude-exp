@@ -15,7 +15,7 @@ const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { id: 'todo', label: 'To-do', icon: <IconTodo />, hint: 'Checklist (T)' },
   { id: 'line', label: 'Line', icon: <IconLine />, hint: 'Connect two cards (C)' },
   { id: 'board', label: 'Board', icon: <IconBoard />, hint: 'Nested board (B)' },
-  { id: 'column', label: 'Column', icon: <IconColumn />, hint: 'Group cards in a column' },
+  { id: 'column', label: 'Group', icon: <IconColumn />, hint: 'Group: cards side by side in a resizable area (select cards and press ⌘G)' },
   { id: 'table', label: 'Table', icon: <IconTable />, hint: 'Table, e.g. a script or shot list' },
   { id: 'comment', label: 'Comment', icon: <IconComment />, hint: 'Comment: click anywhere to pin one (M)' },
   { id: 'image', label: 'Add image', icon: <IconImage />, hint: 'Upload images' },

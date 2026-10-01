@@ -60,6 +60,8 @@ export interface Item {
   table?: string[][];
   boardId?: string;
   childIds?: string[];
+  /** Groups (type 'column'): columns in the grid. 0 = auto (fits the width); unset = 1 (older columns). */
+  cols?: number;
   comments?: CommentEntry[];
   createdBy?: string;
   createdAt?: number;

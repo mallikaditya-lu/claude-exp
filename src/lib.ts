@@ -198,6 +198,13 @@ export function resolveEmbed(raw?: string): Embed | null {
 }
 
 // ---------- board helpers ----------
+/** How many grid columns a group shows at its current width. */
+export function groupCols(item: Item) {
+  if (item.cols === undefined) return 1;
+  if (item.cols > 0) return Math.min(8, item.cols);
+  return Math.max(1, Math.min(8, Math.floor((item.w - 16) / 250)));
+}
+
 export function isInColumn(item: Item, items: Record<string, Item>) {
   if (!item.parentId) return false;
   const parent = items[item.parentId];

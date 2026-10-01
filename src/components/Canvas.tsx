@@ -48,7 +48,7 @@ function defaults(type: ItemType): Partial<Item> {
     case 'todo': return { w: 260, title: '', todos: [{ id: uid(), text: '', done: false }] };
     case 'table': return { w: 480, title: '', table: [['', '', ''], ['', '', ''], ['', '', '']] };
     case 'board': return { w: 170 };
-    case 'column': return { w: 300, title: '', childIds: [] };
+    case 'column': return { w: 640, title: '', childIds: [], cols: 0 };
     case 'image': return { w: 320 };
     case 'video': return { w: 440 };
     case 'audio': return { w: 320 };
@@ -522,6 +522,69 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     return { items: list, connections: conns };
   }, [getBoard]);
 
+  /** ⌘G: put the selected cards into a new group, keeping their reading order. */
+  const groupSelection = useCallback(() => {
+    const b = getBoard();
+    if (!b) return;
+    const picked = [...selectionRef.current].map((id) => b.items[id])
+      .filter((it): it is Item => Boolean(it) && it.type !== 'column' && !isInColumn(it, b.items) && Boolean(rectsRef.current[it.id]));
+    if (!picked.length) { notify('Select some cards first, then press ⌘G'); return; }
+    const rs = picked.map((it) => rectsRef.current[it.id]);
+    const x0 = Math.min(...rs.map((r) => r.x));
+    const y0 = Math.min(...rs.map((r) => r.y));
+    const x1 = Math.max(...rs.map((r) => r.x + r.w));
+    const avgW = rs.reduce((s, r) => s + r.w, 0) / rs.length;
+    const avgH = rs.reduce((s, r) => s + r.h, 0) / rs.length;
+    // Rows: cards whose tops are within half a card of each other; then left to right.
+    const rows: Item[][] = [];
+    for (const it of [...picked].sort((a, c) => rectsRef.current[a.id].y - rectsRef.current[c.id].y)) {
+      const row = rows[rows.length - 1];
+      if (row && rectsRef.current[it.id].y - rectsRef.current[row[0].id].y < avgH / 2) row.push(it);
+      else rows.push([it]);
+    }
+    const order = rows.flatMap((row) => row.sort((a, c) => rectsRef.current[a.id].x - rectsRef.current[c.id].x));
+    const cols = Math.max(1, Math.min(6, Math.round((x1 - x0) / (avgW + 10))));
+    const w = Math.round(Math.max(300, cols * (avgW + 10) + 18));
+    const group: Item = {
+      id: uid(), type: 'column', title: '', cols, x: Math.round(x0 - 9), y: Math.round(y0 - 46), w,
+      z: maxZ(b.items) + 1, childIds: order.map((it) => it.id), createdBy: me, createdAt: Date.now(),
+    };
+    change((bb) => {
+      const next = { ...bb.items, [group.id]: group };
+      for (const it of order) next[it.id] = { ...next[it.id], parentId: group.id };
+      return { ...bb, items: next };
+    });
+    setSelection(new Set([group.id]));
+    setEditingId(group.id);
+  }, [change, getBoard, me, notify]);
+
+  /** ⇧⌘G: release a group's cards where they are and remove the group. */
+  const ungroupSelection = useCallback(() => {
+    const b = getBoard();
+    if (!b) return;
+    const groups = [...selectionRef.current].map((id) => b.items[id]).filter((it) => it?.type === 'column');
+    if (!groups.length) return;
+    const released: string[] = [];
+    change((bb) => {
+      const next = { ...bb.items };
+      let z = maxZ(next);
+      for (const g of groups) {
+        for (const cid of g.childIds || []) {
+          const child = next[cid];
+          if (!child) continue;
+          const r = rectsRef.current[cid];
+          next[cid] = { ...child, parentId: null, x: Math.round(r?.x ?? g.x), y: Math.round(r?.y ?? g.y), w: Math.round(r?.w ?? child.w), z: ++z };
+          released.push(cid);
+        }
+        delete next[g.id];
+      }
+      const gone = new Set(groups.map((g) => g.id));
+      const conns = Object.fromEntries(Object.entries(bb.connections).filter(([, c]) => !gone.has(c.from) && !gone.has(c.to)));
+      return { ...bb, items: next, connections: conns };
+    });
+    setSelection(new Set(released));
+  }, [change, getBoard]);
+
   const duplicate = useCallback(() => {
     const data = collectSelection();
     if (data?.items.length) insertClones(data.items, data.connections, { x: 32, y: 32 });
@@ -577,7 +640,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const key = `drag-${uid()}`;
     let moved = false;
     let origins: Record<string, { x: number; y: number }> = {};
-    const canDrop = ids.length === 1 && !['column', 'board'].includes(item.type);
+    // Any cards except groups can be dropped into a group, several at once.
+    const canDrop = ids.every((id) => b0.items[id]?.type !== 'column');
 
     const onMove = (ev: PointerEvent) => {
       if (!moved) {
@@ -614,8 +678,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         for (const col of cols) {
           const r = rectsRef.current[col.id];
           if (!r || p.x < r.x || p.x > r.x + r.w || p.y < r.y - 10 || p.y > r.y + r.h + 10) continue;
-          const kids = (col.childIds || []).filter((c) => c !== item.id && rectsRef.current[c]);
-          const index = kids.filter((c) => { const cr = rectsRef.current[c]; return cr.y + cr.h / 2 < p.y; }).length;
+          const kids = (col.childIds || []).filter((c) => !ids.includes(c) && rectsRef.current[c]);
+          // Reading order in the grid: rows above the pointer, then cards to its left in the same row.
+          const index = kids.filter((c) => {
+            const cr = rectsRef.current[c];
+            if (cr.y + cr.h < p.y) return true;
+            return cr.y <= p.y && cr.x + cr.w / 2 < p.x;
+          }).length;
           target = { col: col.id, index };
           break;
         }
@@ -637,10 +706,14 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         change((b) => {
           const col = b.items[t.col];
           if (!col) return b;
-          const kids = (col.childIds || []).filter((x) => x !== item.id);
-          kids.splice(t.index, 0, item.id);
-          return { ...b, items: { ...b.items, [col.id]: { ...col, childIds: kids }, [item.id]: { ...b.items[item.id], parentId: col.id } } };
+          const moving = ids.filter((id) => b.items[id]).sort((a, c) => (b.items[a].y - b.items[c].y) || (b.items[a].x - b.items[c].x));
+          const kids = (col.childIds || []).filter((x) => !moving.includes(x));
+          kids.splice(t.index, 0, ...moving);
+          const next = { ...b.items, [col.id]: { ...col, childIds: kids } };
+          for (const id of moving) next[id] = { ...next[id], parentId: col.id };
+          return { ...b, items: next };
         }, key);
+        setSelection(new Set(ids));
       }
       if (!moved && already && ['note', 'heading'].includes(item.type)) setEditingId(item.id);
     };
@@ -655,17 +728,20 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     else if (canEdit && EDITABLE.includes(item.type)) setEditingId(item.id);
   };
 
-  const startResize = (e: React.PointerEvent, item: Item) => {
+  /** Resize from the right edge/corner, or from the left edge (which also moves the card). */
+  const startResize = (e: React.PointerEvent, item: Item, side: 'left' | 'right' = 'right') => {
     e.stopPropagation();
     e.preventDefault();
     const sx = e.clientX;
     const w0 = item.w;
+    const x0 = item.x;
     const key = `resize-${uid()}`;
     const min = MIN_W[item.type] ?? 160;
     setDragging(true);
     const onMove = (ev: PointerEvent) => {
-      const w = Math.round(clamp(w0 + (ev.clientX - sx) / viewRef.current.zoom, min, 2400));
-      updateItem(item.id, { w }, key);
+      const d = (ev.clientX - sx) / viewRef.current.zoom;
+      const w = Math.round(clamp(side === 'left' ? w0 - d : w0 + d, min, 4000));
+      updateItem(item.id, side === 'left' ? { w, x: Math.round(x0 + w0 - w) } : { w }, key);
     };
     const onUp = () => {
       setDragging(false);
@@ -934,6 +1010,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       if (!canEdit) return;
       if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); return; }
       if (mod && key === 'd') { e.preventDefault(); duplicate(); return; }
+      if (mod && key === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
       if (mod && key === 'a') {
         e.preventDefault();
         const b = getBoard()!;
@@ -1019,6 +1096,12 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         />
         {canEdit && single && !inColumn && !dragging && (
           <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
+        )}
+        {canEdit && !inColumn && !dragging && item.type === 'column' && (
+          <>
+            <div className="edge-handle is-left" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'left')} />
+            <div className="edge-handle is-right" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'right')} />
+          </>
         )}
         {canEdit && single && !dragging && !isEditing && SIDES.map((side) => (
           <div
@@ -1249,6 +1332,31 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                     ))}
                     <span className="sep" />
                   </div>
+                )}
+                {single?.type === 'column' && (
+                  <>
+                    <span className="bar-label">Columns</span>
+                    <div className="seg compact">
+                      {[0, 1, 2, 3, 4].map((n) => (
+                        <button
+                          key={n}
+                          className={(single.cols ?? 1) === n ? 'is-on' : ''}
+                          title={n === 0 ? 'Auto: as many as fit; widen the group for more' : `${n} column${n === 1 ? '' : 's'}`}
+                          onClick={() => updateItem(single.id, { cols: n })}
+                        >
+                          {n === 0 ? 'Auto' : n}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="text-btn" title="Ungroup (⇧⌘G)" onClick={ungroupSelection}>Ungroup</button>
+                    <span className="sep" />
+                  </>
+                )}
+                {!single && selItems.length > 1 && selItems.every((it) => it.type !== 'column') && (
+                  <>
+                    <button className="text-btn strong" title="Group (⌘G)" onClick={groupSelection}>Group</button>
+                    <span className="sep" />
+                  </>
                 )}
                 {single?.type === 'board' && single.boardId && (
                   <button className="text-btn strong" onClick={() => openBoard(single.boardId!)}>Open</button>
