@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, socket, type Session } from './api';
+import { api, setActorName, socket, type Session } from './api';
 import { AdminPage } from './components/AdminPage';
 import { BoardShareDialog } from './components/BoardShareDialog';
 import { BoardView } from './components/BoardView';
@@ -59,6 +59,7 @@ export default function App() {
   }, []);
 
   const ready = session?.authed && name;
+  useEffect(() => { setActorName(name); }, [name]);
 
   useEffect(() => {
     if (!ready) return;
@@ -185,6 +186,7 @@ export default function App() {
             boards={byId}
             projects={projectsById}
             me={name}
+            myEmail={session.user?.email || null}
             go={go}
             goProject={goProject}
             notify={notify}

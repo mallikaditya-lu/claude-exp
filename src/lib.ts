@@ -213,6 +213,12 @@ export function applyPatch(board: Board, patch: Patch): Board {
   for (const id of patch.removeItems || []) delete items[id];
   for (const c of patch.upsertConnections || []) connections[c.id] = c;
   for (const id of patch.removeConnections || []) delete connections[id];
+  let threads = board.threads;
+  if (patch.upsertThreads?.length || patch.removeThreads?.length) {
+    threads = { ...(board.threads || {}) };
+    for (const t of patch.upsertThreads || []) threads[t.id] = t;
+    for (const id of patch.removeThreads || []) delete threads[id];
+  }
   return {
     ...board,
     title: patch.title ?? board.title,
@@ -220,5 +226,6 @@ export function applyPatch(board: Board, patch: Patch): Board {
     projectId: patch.projectId !== undefined ? patch.projectId : board.projectId,
     items,
     connections,
+    threads,
   };
 }

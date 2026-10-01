@@ -13,7 +13,7 @@ import { Drive } from './drive.js';
 import { Files, safeHeaders } from './files.js';
 import { AccessVerifier } from './access.js';
 import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
-import { Permissions, MEMBER_ROLES, atLeast, stampCommentAuthors } from './permissions.js';
+import { Permissions, MEMBER_ROLES, atLeast, isOwnComment } from './permissions.js';
 import { Visitors } from './visitors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -491,18 +491,141 @@ app.post('/api/boards/:id/patch', (req, res) => {
   if (!board || !level) return res.status(404).json({ error: 'Board not found' });
   const patch = req.body || {};
   if (level === 'view') return res.status(403).json({ error: 'You have view-only access to this board' });
-  if (level === 'comment') {
-    const problem = perms.checkCommentPatch(req.user, board, patch);
-    if (problem) return res.status(403).json({ error: problem });
-  }
+  if (level === 'comment') return res.status(403).json({ error: 'You can comment on this board, but not change it' });
   // Moving boards between projects changes who can see them: team only.
   if (patch.projectId !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can move boards between projects' });
-  stampCommentAuthors(req.user, board, patch);
   const result = store.applyPatch(req.params.id, patch);
   const origin = String(req.headers['x-client-id'] || '');
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
   scheduleIndexBroadcast();
   res.json({ version: result.board.version });
+});
+
+// ---------- comments (Figma-style pinned threads) ----------
+// Each change is its own request applied on the server, so two people replying at once can't
+// overwrite each other. Everyone on the board gets the updated thread over the WebSocket.
+const MAX_COMMENT = 5000;
+const num = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : null);
+
+/** Who is acting. Without sign-in (password/open mode) the browser says its display name. */
+function actor(req) {
+  if (req.user.email) return req.user;
+  let name = '';
+  try { name = decodeURIComponent(String(req.headers['x-user-name'] || '')); } catch { /* bad encoding */ }
+  return { ...req.user, name: name.trim().slice(0, 60) || 'Someone' };
+}
+
+function newComment(user, text) {
+  const c = { id: crypto.randomUUID(), author: user.name, text, at: Date.now() };
+  if (user.email) c.authorEmail = user.email;
+  if (user.visitor) c.viaLink = true;
+  return c;
+}
+
+const cleanText = (v) => String(v ?? '').replace(/\r\n/g, '\n').trim().slice(0, MAX_COMMENT);
+
+/** Where a pin sits: on a card (moves with it) or at a spot on the board. */
+function pinPlace(board, body) {
+  const x = num(body.x);
+  const y = num(body.y);
+  if (x === null || y === null) return null;
+  const place = { x, y, itemId: null, dx: null, dy: null };
+  const item = typeof body.itemId === 'string' ? board.items[body.itemId] : null;
+  if (item && num(body.dx) !== null && num(body.dy) !== null) Object.assign(place, { itemId: item.id, dx: num(body.dx), dy: num(body.dy) });
+  return place;
+}
+
+/** Load the board and thread, check the person may comment. Sends the error response itself. */
+function threadAccess(req, res, needThread = true) {
+  const board = store.get(req.params.id);
+  const level = perms.boardLevel(req.user, board);
+  if (!board || !level) { res.status(404).json({ error: 'Board not found' }); return null; }
+  if (!atLeast(level, 'comment')) { res.status(403).json({ error: 'You have view-only access to this board' }); return null; }
+  const thread = needThread ? board.threads?.[req.params.tid] : null;
+  if (needThread && !thread) { res.status(404).json({ error: 'This comment was deleted' }); return null; }
+  return { board, thread, level, user: actor(req), moderator: atLeast(level, 'edit') };
+}
+
+function sendThread(res, boardId, thread) {
+  const board = store.saveThread(boardId, thread);
+  broadcast(boardId, { t: 'patch', boardId, patch: { upsertThreads: [thread] }, version: board.version });
+  scheduleIndexBroadcast();
+  res.json(thread);
+}
+
+function dropThread(res, boardId, threadId) {
+  const board = store.removeThread(boardId, threadId);
+  broadcast(boardId, { t: 'patch', boardId, patch: { removeThreads: [threadId] }, version: board.version });
+  scheduleIndexBroadcast();
+  res.json({ ok: true });
+}
+
+// Start a thread: a pin plus its first comment.
+app.post('/api/boards/:id/threads', (req, res) => {
+  const a = threadAccess(req, res, false);
+  if (!a) return;
+  const text = cleanText(req.body?.text);
+  if (!text) return res.status(400).json({ error: 'Write something first' });
+  const place = pinPlace(a.board, req.body || {});
+  if (!place) return res.status(400).json({ error: 'Missing position' });
+  const thread = { id: crypto.randomUUID(), ...place, createdAt: Date.now(), resolved: null, comments: [newComment(a.user, text)] };
+  sendThread(res, a.board.id, thread);
+});
+
+app.post('/api/boards/:id/threads/:tid/comments', (req, res) => {
+  const a = threadAccess(req, res);
+  if (!a) return;
+  const text = cleanText(req.body?.text);
+  if (!text) return res.status(400).json({ error: 'Write something first' });
+  sendThread(res, a.board.id, { ...a.thread, comments: [...a.thread.comments, newComment(a.user, text)] });
+});
+
+// Resolve / reopen (anyone who can comment), or move the pin (its author, or an editor).
+app.patch('/api/boards/:id/threads/:tid', (req, res) => {
+  const a = threadAccess(req, res);
+  if (!a) return;
+  const next = { ...a.thread };
+  if (typeof req.body?.resolved === 'boolean') {
+    next.resolved = req.body.resolved ? { by: a.user.name, byEmail: a.user.email || null, at: Date.now() } : null;
+  }
+  if (req.body?.x !== undefined) {
+    if (!a.moderator && !isOwnComment(a.user, a.thread.comments[0] || {})) return res.status(403).json({ error: 'Only the person who started this thread can move it' });
+    const place = pinPlace(a.board, req.body);
+    if (!place) return res.status(400).json({ error: 'Missing position' });
+    Object.assign(next, place);
+  }
+  sendThread(res, a.board.id, next);
+});
+
+// Deleting a thread removes its replies too, so only its author or an editor may.
+app.delete('/api/boards/:id/threads/:tid', (req, res) => {
+  const a = threadAccess(req, res);
+  if (!a) return;
+  if (!a.moderator && !isOwnComment(a.user, a.thread.comments[0] || {})) return res.status(403).json({ error: 'Only the person who started this thread can delete it' });
+  dropThread(res, a.board.id, a.thread.id);
+});
+
+app.patch('/api/boards/:id/threads/:tid/comments/:cid', (req, res) => {
+  const a = threadAccess(req, res);
+  if (!a) return;
+  const c = a.thread.comments.find((x) => x.id === req.params.cid);
+  if (!c) return res.status(404).json({ error: 'This comment was deleted' });
+  if (!isOwnComment(a.user, c)) return res.status(403).json({ error: 'You can only edit your own comments' });
+  const text = cleanText(req.body?.text);
+  if (!text) return res.status(400).json({ error: 'A comment can’t be empty' });
+  const comments = a.thread.comments.map((x) => (x.id === c.id ? { ...x, text, editedAt: Date.now() } : x));
+  sendThread(res, a.board.id, { ...a.thread, comments });
+});
+
+app.delete('/api/boards/:id/threads/:tid/comments/:cid', (req, res) => {
+  const a = threadAccess(req, res);
+  if (!a) return;
+  const idx = a.thread.comments.findIndex((x) => x.id === req.params.cid);
+  if (idx < 0) return res.status(404).json({ error: 'This comment was deleted' });
+  if (!a.moderator && !isOwnComment(a.user, a.thread.comments[idx])) return res.status(403).json({ error: 'You can only delete your own comments' });
+  // The first comment is the thread, as in Figma: deleting it deletes the thread.
+  if (idx === 0) return dropThread(res, a.board.id, a.thread.id);
+  sendThread(res, a.board.id, { ...a.thread, comments: a.thread.comments.filter((_, i) => i !== idx) });
 });
 
 app.delete('/api/boards/:id', needTeam, (req, res) => {

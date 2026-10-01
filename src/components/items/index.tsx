@@ -3,13 +3,12 @@ import { BoardCard, ColumnCard } from './Containers';
 import { LinkCard } from './LinkCard';
 import { TableCard, TodoCard } from './ListCards';
 import { AudioCard, FileCard, ImageCard, VideoCard } from './MediaCards';
-import { CommentCard, HeadingCard, NoteCard } from './TextCards';
+import { HeadingCard, NoteCard } from './TextCards';
 
 export function ItemBody(props: CardProps) {
   switch (props.item.type) {
     case 'note': return <NoteCard {...props} />;
     case 'heading': return <HeadingCard {...props} />;
-    case 'comment': return <CommentCard {...props} />;
     case 'todo': return <TodoCard {...props} />;
     case 'table': return <TableCard {...props} />;
     case 'link': return <LinkCard {...props} />;

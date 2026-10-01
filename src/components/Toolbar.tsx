@@ -17,18 +17,18 @@ const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { id: 'board', label: 'Board', icon: <IconBoard />, hint: 'Nested board (B)' },
   { id: 'column', label: 'Column', icon: <IconColumn />, hint: 'Group cards in a column' },
   { id: 'table', label: 'Table', icon: <IconTable />, hint: 'Table, e.g. a script or shot list' },
-  { id: 'comment', label: 'Comment', icon: <IconComment />, hint: 'Comment thread' },
+  { id: 'comment', label: 'Comment', icon: <IconComment />, hint: 'Comment: click anywhere to pin one (M)' },
   { id: 'image', label: 'Add image', icon: <IconImage />, hint: 'Upload images' },
   { id: 'upload', label: 'Upload', icon: <IconUpload />, hint: 'Upload video, audio, PDFs or any file' },
 ];
 
-export function Toolbar({ onTool, lineMode }: { onTool: (t: Tool) => void; lineMode: boolean }) {
+export function Toolbar({ onTool, lineMode, commentMode }: { onTool: (t: Tool) => void; lineMode: boolean; commentMode: boolean }) {
   return (
     <nav className="toolbar" onPointerDown={(e) => e.stopPropagation()}>
       {TOOLS.map((t) => (
         <button
           key={t.id}
-          className={`tool ${t.id === 'line' && lineMode ? 'is-active' : ''}`}
+          className={`tool ${(t.id === 'line' && lineMode) || (t.id === 'comment' && commentMode) ? 'is-active' : ''}`}
           title={t.hint}
           draggable={t.id !== 'line' && t.id !== 'image' && t.id !== 'upload'}
           onDragStart={(e) => {

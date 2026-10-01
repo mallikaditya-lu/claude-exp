@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clientId } from '../api';
 import { BACKGROUNDS, background, color } from '../lib';
 import type { BoardSummary, Project } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
+import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
+import { IconChevron, IconComment, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
 
 interface Props {
   boardId: string;
   boards: Record<string, BoardSummary>;
   projects: Record<string, Project>;
   me: string;
+  /** Signed-in email (Cloudflare mode), for recognising your own comments. */
+  myEmail: string | null;
   go: (id: string | null) => void;
   goProject: (id: string | null) => void;
   notify: (msg: string) => void;
@@ -23,8 +26,11 @@ interface Props {
 
 const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…', offline: 'Offline — retrying', missing: '' };
 
-export function BoardView({ boardId, boards, projects, me, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
-  const { board, status, presence, change, undo, redo, getBoard } = useBoard(boardId);
+export function BoardView({ boardId, boards, projects, me, myEmail, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
+  const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
+  const [comments, setComments] = useCommentUi();
+  const actions = useCommentActions(boardId, applyServerPatch, notify);
+  const identity: Identity = useMemo(() => ({ name: me, email: myEmail, visitor: false }), [me, myEmail]);
   const [title, setTitle] = useState('');
   useEffect(() => { if (board) setTitle(board.title); }, [board?.title]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -44,6 +50,7 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
   const bg = background(board?.background);
   const access = board?.access || 'manage';
   const canEdit = access === 'manage' || access === 'edit';
+  const openCount = Object.values(board?.threads || {}).filter((t) => !t.resolved).length;
 
   if (status === 'missing') {
     return (
@@ -108,6 +115,14 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
             onChange={(id) => change((b) => ({ ...b, background: id === 'default' ? null : id }))}
           />
         )}
+        <button
+          className={`icon-btn comments-toggle ${comments.panel ? 'is-on' : ''}`}
+          title="Comments"
+          onClick={() => setComments((u) => ({ ...u, panel: !u.panel }))}
+        >
+          <IconComment size={17} />
+          {openCount > 0 && <span className="badge">{openCount}</span>}
+        </button>
         {canEdit && <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>}
         {canEdit && <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>}
         <button
@@ -124,6 +139,7 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
           <IconShare size={15} /> Share
         </button>
       </header>
+      <div className="board-body">
       <div
         className={`board-stage ${bg.dark ? 'theme-dark' : 'theme-light'}`}
         style={{ ['--canvas' as string]: bg.canvas, ['--dot' as string]: bg.dot }}
@@ -141,10 +157,13 @@ export function BoardView({ boardId, boards, projects, me, go, goProject, notify
             openBoard={(id) => go(id)}
             notify={notify}
             access={access}
+            comments={{ ui: comments, setUi: setComments, me: identity, actions }}
           />
         ) : (
           <div className="splash"><div className="spinner" /></div>
         )}
+      </div>
+      {comments.panel && <CommentsPanel board={board} access={access} ui={comments} setUi={setComments} me={identity} actions={actions} />}
       </div>
     </div>
   );

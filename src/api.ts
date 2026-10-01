@@ -1,11 +1,15 @@
-import type { Board, BoardSharing, BoardSummary, GlobalRole, LinkMode, MemberRole, Patch, Project } from './types';
+import type { Board, BoardSharing, BoardSummary, GlobalRole, LinkMode, MemberRole, Patch, Project, Thread } from './types';
 
 export const clientId = crypto.randomUUID();
+
+// Without sign-in (password/open mode) the server only knows your name from this header.
+let actorName = '';
+export function setActorName(name: string) { actorName = name; }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: { 'content-type': 'application/json', 'x-client-id': clientId, ...(init?.headers || {}) },
+    headers: { 'content-type': 'application/json', 'x-client-id': clientId, 'x-user-name': encodeURIComponent(actorName), ...(init?.headers || {}) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -107,6 +111,22 @@ export const api = {
     req<ShareInfo>(`/api/share/${encodeURIComponent(token)}/identify`, { method: 'POST', body: JSON.stringify({ name, email }) }),
   forgetMe: () => req<{ ok: boolean }>('/api/share-forget', { method: 'POST' }),
   removeVisitor: (id: string) => req<{ ok: boolean }>(`/api/admin/visitors/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  comments: {
+    start: (boardId: string, place: Pick<Thread, 'x' | 'y' | 'itemId' | 'dx' | 'dy'>, text: string) =>
+      req<Thread>(`/api/boards/${boardId}/threads`, { method: 'POST', body: JSON.stringify({ ...place, text }) }),
+    reply: (boardId: string, threadId: string, text: string) =>
+      req<Thread>(`/api/boards/${boardId}/threads/${threadId}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
+    resolve: (boardId: string, threadId: string, resolved: boolean) =>
+      req<Thread>(`/api/boards/${boardId}/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify({ resolved }) }),
+    move: (boardId: string, threadId: string, place: Pick<Thread, 'x' | 'y' | 'itemId' | 'dx' | 'dy'>) =>
+      req<Thread>(`/api/boards/${boardId}/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(place) }),
+    removeThread: (boardId: string, threadId: string) =>
+      req<{ ok: boolean }>(`/api/boards/${boardId}/threads/${threadId}`, { method: 'DELETE' }),
+    edit: (boardId: string, threadId: string, commentId: string, text: string) =>
+      req<Thread>(`/api/boards/${boardId}/threads/${threadId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ text }) }),
+    remove: (boardId: string, threadId: string, commentId: string) =>
+      req<Thread | { ok: boolean }>(`/api/boards/${boardId}/threads/${threadId}/comments/${commentId}`, { method: 'DELETE' }),
+  },
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),

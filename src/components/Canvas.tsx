@@ -7,6 +7,7 @@ import { ConnectorToolbar } from './ConnectorToolbar';
 import { CanvasContext, type CanvasCtx } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
+import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
   IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment,
@@ -24,8 +25,8 @@ interface Props {
   notify: (msg: string) => void;
   /** What the current person may do here (the server enforces the same rules). */
   access?: Access;
-  /** Scroll to and select this card; bump `n` to do it again for the same card. */
-  focus?: { id: string; n: number } | null;
+  /** Comment pins, popovers and comment mode (state lives with the page, shared with the panel). */
+  comments?: CommentsProps;
 }
 
 interface View { x: number; y: number; zoom: number }
@@ -36,7 +37,7 @@ const CLIP_PREFIX = 'RB_CARDS:';
 const INTERACTIVE = 'input, textarea, button, a, select, video, audio, iframe, label, [contenteditable="true"], [contenteditable="plaintext-only"], .nodrag';
 const EDITABLE: ItemType[] = ['note', 'heading', 'link', 'column', 'board', 'image'];
 const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'];
-const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'comment', 'table'];
+const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
 const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 80, board: 120 };
 
 function defaults(type: ItemType): Partial<Item> {
@@ -46,7 +47,6 @@ function defaults(type: ItemType): Partial<Item> {
     case 'link': return { w: 320 };
     case 'todo': return { w: 260, title: '', todos: [{ id: uid(), text: '', done: false }] };
     case 'table': return { w: 480, title: '', table: [['', '', ''], ['', '', ''], ['', '', '']] };
-    case 'comment': return { w: 260, comments: [] };
     case 'board': return { w: 170 };
     case 'column': return { w: 300, title: '', childIds: [] };
     case 'image': return { w: 320 };
@@ -78,27 +78,13 @@ function loadView(id: string): View | null {
   } catch { return null; }
 }
 
-export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', focus }: Props) {
+export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', comments }: Props) {
   const canEdit = access === 'manage' || access === 'edit';
   const canComment = canEdit || access === 'comment';
-  // Viewers can't change anything; commenters only add comment cards and write in them.
+  // Only editors change cards. Comments are saved separately (see Comments.tsx).
   const change = useCallback((recipe: (b: Board) => Board, key?: string) => {
-    if (canEdit) return rawChange(recipe, key);
-    if (!canComment) return;
-    rawChange((b) => {
-      const next = recipe(b);
-      const onlyComments = Object.values(next.items).every((it) => {
-        const prev = b.items[it.id];
-        if (prev === it) return true;
-        if (it.type !== 'comment') return false;
-        if (!prev) return true;
-        const { comments: _a, ...restA } = it;
-        const { comments: _b, ...restB } = prev;
-        return JSON.stringify(restA) === JSON.stringify(restB);
-      }) && Object.keys(b.items).every((id) => next.items[id]) && next.connections === b.connections && next.title === b.title && next.background === b.background;
-      return onlyComments ? next : b;
-    }, key);
-  }, [rawChange, canEdit, canComment]);
+    if (canEdit) rawChange(recipe, key);
+  }, [rawChange, canEdit]);
   const rootRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -209,16 +195,49 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     setView({ zoom, x: (width - (x1 - x0) * zoom) / 2 - x0 * zoom + 40, y: (height - (y1 - y0) * zoom) / 2 - y0 * zoom });
   }, []);
 
+  // The comments panel asks to show a thread: bring its pin into view, leaving room for the popover.
+  const focusN = comments?.ui.focus ?? 0;
   useEffect(() => {
-    const r = focus && rectsRef.current[focus.id];
+    const t = comments?.ui.openId ? board.threads?.[comments.ui.openId] : null;
     const root = rootRef.current;
-    if (!focus || !r || !root) return;
+    if (!focusN || !t || !root) return;
     needsFit.current = false;
+    const p = pinPoint(t, rectsRef.current);
     const { width, height } = root.getBoundingClientRect();
-    const zoom = Math.max(viewRef.current.zoom, 0.9);
-    setView({ zoom, x: width / 2 - (r.x + r.w / 2) * zoom, y: height / 2 - (r.y + r.h / 2) * zoom });
-    setSelection(new Set([focus.id]));
-  }, [focus]);
+    const zoom = Math.max(viewRef.current.zoom, 0.8);
+    setView({ zoom, x: width * 0.38 - p.x * zoom, y: height * 0.45 - p.y * zoom });
+  }, [focusN]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** A new pin at this board point attaches to the smallest card under it, if any. */
+  const placeAt = useCallback((p: { x: number; y: number }): Place => {
+    let best: string | null = null;
+    let area = Infinity;
+    for (const [id, r] of Object.entries(rectsRef.current)) {
+      if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h && r.w * r.h < area) { best = id; area = r.w * r.h; }
+    }
+    const place: Place = { x: Math.round(p.x), y: Math.round(p.y) };
+    if (best) {
+      const r = rectsRef.current[best];
+      Object.assign(place, { itemId: best, dx: Math.round(p.x - r.x), dy: Math.round(p.y - r.y) });
+    }
+    return place;
+  }, []);
+
+  // The canvas's own size (it shrinks when the comments panel opens), for placing popovers.
+  const [size, setSize] = useState({ width: 1200, height: 800 });
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSize({ width: el.clientWidth, height: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const commentMode = Boolean(comments?.ui.mode && canComment);
+  const setCommentUi = comments?.setUi;
+  const toggleCommentMode = useCallback(() => {
+    setCommentUi?.((u) => ({ ...u, mode: !u.mode, draft: null, panel: u.mode ? u.panel : true }));
+  }, [setCommentUi]);
 
   useEffect(() => {
     if (needsFit.current && Object.keys(rects).length) {
@@ -246,6 +265,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   useEffect(() => {
     const el = rootRef.current!;
     const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey) && (e.target as HTMLElement).closest?.('.wheel-scroll')) return; // scrolling a comment thread
       e.preventDefault();
       const k = e.deltaMode === 1 ? 16 : 1;
       if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-clamp(e.deltaY * k, -30, 30) * 0.01));
@@ -329,12 +349,18 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       setLineFrom(null);
       return;
     }
+    if (tool === 'comment') {
+      setLineMode(false);
+      if (at) setCommentUi?.((u) => ({ ...u, mode: true, panel: true, openId: null, draft: placeAt(at) }));
+      else toggleCommentMode();
+      return;
+    }
     setLineMode(false);
     if (tool === 'image') return pickFiles('image/*', at);
     if (tool === 'upload') return pickFiles('', at);
     if (tool === 'board') { addBoard(at); return; }
     addItem(tool, at);
-  }, [addBoard, addItem]);
+  }, [addBoard, addItem, placeAt, setCommentUi, toggleCommentMode]);
 
   const addConnection = useCallback((from: string, to: string, fromSide?: Side, toSide?: Side) => {
     if (from === to) return;
@@ -478,6 +504,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     e.stopPropagation();
     if (spaceRef.current) { startPan(e); return; }
     const target = e.target as HTMLElement;
+    if (commentMode) {
+      e.preventDefault();
+      setCommentUi?.((u) => ({ ...u, openId: null, draft: placeAt(toWorld(e.clientX, e.clientY)) }));
+      return;
+    }
     if (lineMode) {
       if (!lineFrom) setLineFrom(item.id);
       else { addConnection(lineFrom, item.id); setLineFrom(null); setLineMode(false); }
@@ -704,6 +735,12 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     if (e.button === 1 || (e.button === 0 && spaceRef.current)) { startPan(e); return; }
     if (e.button !== 0) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
+    if (commentMode) {
+      e.preventDefault();
+      setCommentUi?.((u) => ({ ...u, openId: null, draft: placeAt(toWorld(e.clientX, e.clientY)) }));
+      return;
+    }
+    if (comments?.ui.openId || comments?.ui.draft) setCommentUi?.((u) => ({ ...u, openId: null, draft: null }));
     setEditingId(null);
     setSelConn(null);
     if (lineMode) setLineFrom(null);
@@ -841,11 +878,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       if (mod && key === 'y' && !typing) { e.preventDefault(); redo(); return; }
       if (typing) return;
       if (document.querySelector('.modal')) return;
-      if (key === 'escape') { setSelection(new Set()); setSelConn(null); setLineMode(false); setLineFrom(null); return; }
-      if (!canEdit) {
-        if (canComment && !mod && key === 'm') { e.preventDefault(); addItem('comment'); } // M = new comment
+      if (key === 'escape') {
+        setSelection(new Set()); setSelConn(null); setLineMode(false); setLineFrom(null);
+        setCommentUi?.((u) => (u.draft ? { ...u, draft: null } : u.openId ? { ...u, openId: null } : { ...u, mode: false }));
         return;
       }
+      if (canComment && comments && !mod && key === 'm') { e.preventDefault(); toggleCommentMode(); return; } // M = comment mode
+      if (!canEdit) return;
       if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); return; }
       if (mod && key === 'd') { e.preventDefault(); duplicate(); return; }
       if (mod && key === 'a') {
@@ -1007,7 +1046,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     <CanvasContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
+        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${commentMode ? 'is-comment-mode' : ''} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px` }}
         onPointerDown={onBgPointerDown}
         onPointerMove={onPointerMove}
@@ -1202,6 +1241,26 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           </div>
         )}
 
+        {comments && (
+          <CommentLayer
+            {...comments}
+            board={board}
+            access={access}
+            view={view}
+            rects={rects}
+            size={size}
+            toWorld={toWorld}
+            placeAt={placeAt}
+          />
+        )}
+
+        {commentMode && !comments?.ui.draft && (
+          <div className="mode-banner" onPointerDown={(e) => e.stopPropagation()}>
+            Click anywhere on the board, or on a card, to leave a comment
+            <button className="text-btn" onClick={toggleCommentMode}>Done</button>
+          </div>
+        )}
+
         <div className="zoom-controls" onPointerDown={(e) => e.stopPropagation()}>
           <button className="icon-btn" title="Zoom out (⌘−)" onClick={() => zoomCenter(1 / 1.2)}><IconMinus size={16} /></button>
           <button className="zoom-level" title="Reset to 100% (⌘0)" onClick={() => setView((v) => ({ ...v, zoom: 1 }))}>{Math.round(view.zoom * 100)}%</button>
@@ -1210,10 +1269,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         </div>
       </div>
 
-      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} />}
-      {!canEdit && canComment && (
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} />}
+      {!canEdit && canComment && comments && (
         <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
-          <button className="tool" title="Add a comment (M)" onClick={() => addItem('comment')}>
+          <button className={`tool ${commentMode ? 'is-active' : ''}`} title="Comment (M)" onClick={toggleCommentMode}>
             <span className="tool-icon"><IconComment /></span>
             <span className="tool-label">Comment</span>
           </button>

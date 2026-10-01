@@ -3,7 +3,8 @@
 // Access levels, from most to least: manage > edit > comment > view.
 //   manage  – team/admin: everything, including sharing and deleting
 //   edit    – project editor: add, move, change and delete cards; upload; create boards in the project
-//   comment – project commenter: view, add comment cards and reply
+//   comment – commenter: view, start comment threads, reply, resolve; edit/delete their own comments
+//             (editors can also delete anyone's)
 //   view    – project viewer: look only
 //
 // Guests get a level from project invites and from board invites (a board invite covers the
@@ -120,50 +121,14 @@ export class Permissions {
     }
     return false;
   }
-
-  /**
-   * Commenters may only add comment cards and add/remove their own comments on comment cards.
-   * Returns an error message, or null if the patch is allowed.
-   */
-  checkCommentPatch(user, board, patch) {
-    if (patch.title !== undefined || patch.background !== undefined || patch.projectId !== undefined) return 'Commenters can’t change board settings';
-    if (patch.removeItems?.length || patch.upsertConnections?.length || patch.removeConnections?.length) return 'Commenters can only add comments';
-    for (const it of patch.upsertItems || []) {
-      if (it.type !== 'comment') return 'Commenters can only add comments';
-      const prev = board.items[it.id];
-      if (!prev) continue; // a new comment card
-      const { comments: a = [], ...restNew } = it;
-      const { comments: b = [], ...restOld } = prev;
-      if (JSON.stringify(restNew) !== JSON.stringify(restOld)) return 'Commenters can’t move or restyle cards';
-      const before = new Map(b.map((c) => [c.id, c]));
-      const after = new Map(a.map((c) => [c.id, c]));
-      for (const [id, c] of before) {
-        if (!after.has(id) && !isOwnComment(user, c)) return 'You can only delete your own comments';
-        if (after.has(id) && JSON.stringify(after.get(id)) !== JSON.stringify(c)) return 'Comments can’t be edited';
-      }
-    }
-    return null;
-  }
 }
 
-/** Comments carry who wrote them; link visitors' comments are marked so they can't pass as a signed-in person's. */
-function isOwnComment(user, c) {
-  if (c.authorEmail) return c.authorEmail === user.email && Boolean(c.viaLink) === Boolean(user.visitor);
-  return c.author === user.name;
-}
-
-/** New comments are always credited to the signed-in person (or named visitor), whatever the browser sent. */
-export function stampCommentAuthors(user, board, patch) {
-  if (!user?.email) return;
-  for (const it of patch.upsertItems || []) {
-    if (!Array.isArray(it.comments)) continue;
-    const before = new Map((board.items[it.id]?.comments || []).map((c) => [c.id, c]));
-    it.comments = it.comments.map((c) => {
-      if (before.has(c.id)) return before.get(c.id); // existing comments can't be re-attributed
-      const out = { ...c, author: user.name, authorEmail: user.email };
-      if (user.visitor) out.viaLink = true;
-      else delete out.viaLink;
-      return out;
-    });
-  }
+/**
+ * Whose comment is this? Signed-in people and named link visitors are matched by email (a visitor's
+ * comment never counts as a signed-in person's with the same email). Without sign-in (password or
+ * open mode) only the display name is known.
+ */
+export function isOwnComment(user, c) {
+  if (c.authorEmail) return Boolean(user.email) && c.authorEmail === user.email && Boolean(c.viaLink) === Boolean(user.visitor);
+  return Boolean(user.name) && c.author === user.name;
 }
