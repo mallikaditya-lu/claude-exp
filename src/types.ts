@@ -62,6 +62,8 @@ export interface Item {
   childIds?: string[];
   /** Groups (type 'column'): columns in the grid. 0 = auto (fits the width); unset = 1 (older columns). */
   cols?: number;
+  /** Text size in px for text cards (notes, headings, to-dos, tables). Unset = 14. */
+  fontSize?: number;
   comments?: CommentEntry[];
   createdBy?: string;
   createdAt?: number;

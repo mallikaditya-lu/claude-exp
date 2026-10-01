@@ -38,7 +38,11 @@ const INTERACTIVE = 'input, textarea, button, a, select, video, audio, iframe, l
 const EDITABLE: ItemType[] = ['note', 'heading', 'link', 'column', 'board', 'image'];
 const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'];
 const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
-const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 80, board: 120 };
+const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 60, video: 120, link: 160, board: 120 };
+const TEXT_SIZED: ItemType[] = ['note', 'heading', 'todo', 'table'];
+const TEXT_SIZES: [string, number][] = [['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['2XL', 34]];
+const MEDIA_SIZED: ItemType[] = ['image', 'video', 'link', 'audio', 'file'];
+const MEDIA_SIZES: [string, number][] = [['S', 220], ['M', 380], ['L', 620], ['XL', 960]];
 
 function defaults(type: ItemType): Partial<Item> {
   switch (type) {
@@ -1083,7 +1087,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           selected && 'is-selected', isEditing && 'is-editing', inColumn && 'in-column',
           lineFrom === item.id && 'is-line-source',
         ].filter(Boolean).join(' ')}
-        style={inColumn ? undefined : { left: item.x, top: item.y, width: item.w, zIndex: item.z }}
+        style={inColumn ? (item.fontSize ? { fontSize: item.fontSize } : undefined) : { left: item.x, top: item.y, width: item.w, zIndex: item.z, ...(item.fontSize ? { fontSize: item.fontSize } : {}) }}
         onPointerDown={(e) => onItemPointerDown(e, item)}
         onDoubleClick={(e) => onItemDoubleClick(e, item)}
       >
@@ -1097,7 +1101,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         {canEdit && single && !inColumn && !dragging && (
           <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
         )}
-        {canEdit && !inColumn && !dragging && item.type === 'column' && (
+        {canEdit && !inColumn && !dragging && (item.type === 'column' || single) && (
           <>
             <div className="edge-handle is-left" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'left')} />
             <div className="edge-handle is-right" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'right')} />
@@ -1355,6 +1359,39 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 {!single && selItems.length > 1 && selItems.every((it) => it.type !== 'column') && (
                   <>
                     <button className="text-btn strong" title="Group (⌘G)" onClick={groupSelection}>Group</button>
+                    <span className="sep" />
+                  </>
+                )}
+                {selItems.length > 0 && selItems.every((it) => TEXT_SIZED.includes(it.type)) && (
+                  <>
+                    <span className="bar-label">Text</span>
+                    <div className="seg compact">
+                      {TEXT_SIZES.map(([label, px]) => (
+                        <button
+                          key={label}
+                          className={(selItems[0].fontSize ?? 14) === px ? 'is-on' : ''}
+                          title={`${px}px`}
+                          onClick={() => change((b) => {
+                            const next = { ...b.items };
+                            for (const it of selItems) next[it.id] = { ...next[it.id], fontSize: px === 14 ? undefined : px };
+                            return { ...b, items: next };
+                          })}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="sep" />
+                  </>
+                )}
+                {single && MEDIA_SIZED.includes(single.type) && !isInColumn(single, items) && (
+                  <>
+                    <span className="bar-label">Size</span>
+                    <div className="seg compact">
+                      {MEDIA_SIZES.map(([label, w]) => (
+                        <button key={label} className={Math.abs(single.w - w) < 2 ? 'is-on' : ''} title={`${w}px wide (or drag the edges)`} onClick={() => updateItem(single.id, { w })}>{label}</button>
+                      ))}
+                    </div>
                     <span className="sep" />
                   </>
                 )}
