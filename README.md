@@ -2,7 +2,7 @@
 
 An internal, Milanote-style visual board for collecting references and structuring research as a team.
 Put notes, links, embedded video and music, uploads, tables and to-dos on an infinite canvas,
-connect them with lines, group them in columns, and nest boards inside boards. Everyone on a board sees
+connect them with lines, group them, and nest boards inside boards. Everyone on a board sees
 edits, presence and cursors live.
 
 ![Cards on the board: headings connected to a script table, notes, a to-do list, embeds and a column](docs/screenshot.png)
@@ -15,11 +15,11 @@ edits, presence and cursors live.
 | **Heading** | Coloured label for structuring sections ("Hero movie" → "Narration", "Music options"…). |
 | **Link** | Paste any URL. YouTube, Vimeo, Loom, Spotify, SoundCloud, Apple Music, Figma, Google Docs/Drive and direct media links become **playable embeds**; other sites get a preview card (title, image, description). |
 | **To-do** | Checklist with progress. Enter adds a task and Backspace on an empty task removes it. |
-| **Table** | Editable grid for scripts, shot lists and comparisons. Add or remove rows and columns. |
+| **Table** | Grid for scripts, shot lists and comparisons. Cells can hold images, GIFs, videos and links: paste or drop them into a cell (a line that is a media link shows the media; other links become chips). Drag header borders to resize columns; Tab moves to the next cell. |
 | **Comment** | Figma-style pins: press **M** (or the Comment tool) and click anywhere, or on a card (the pin then moves with the card). Click a pin to reply, resolve it, or edit or delete your own comments. The **Comments** panel on the right lists every thread, open or resolved, with an *Only yours* filter. |
 | **Board** | A nested board. Double-click to open it; breadcrumbs and the sidebar show the hierarchy. |
-| **Column** | Drag cards in and out to group and order them. |
-| **Image / Video / Audio / File** | Upload via the toolbar, drag files from your desktop, or paste images. Audio gets an inline player, video a native player, and PDFs and other files a download card. |
+| **Group** | A titled area whose cards sit side by side in a grid (1–4 columns, or **Auto**, which fits as many as the width allows). Drag either side edge to resize it and the cards inside reflow. Select cards and press **⌘G** to group them, **⇧⌘G** to ungroup; drag cards in and out. (Older "columns" are one-column groups.) |
+| **Image / Video / Audio / File** | Upload via the toolbar, drag files from your desktop, or paste images. **GIFs and WebPs copied or dragged from a website stay animated** (the original file is fetched, not the still frame the browser puts on the clipboard), and pasted image/GIF links or Giphy/Tenor pages become images instead of link cards. Audio gets an inline player, video a native player, and PDFs and other files a download card. |
 | **Line** | FigJam-style connector between two cards: elbow, curved or straight, solid or dashed, three thicknesses, any colour, arrows at none/one/both ends, and an optional label. |
 
 ## Projects and backgrounds
@@ -30,13 +30,17 @@ edits, presence and cursors live.
 
 ## Using it
 
-- **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick note.
-- **Paste anything:** a URL makes a link card, an image uploads, and plain text makes a note.
+- **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick note. Press **⇧A** for an add menu right at the cursor: type to filter, paste a link, or type text to make a note. Templates are listed there too.
+- **Drag a line into empty space:** the same menu opens there, and the new card is connected to the line.
+- **Templates (core team):** select cards (a group, table, to-do list, note, or a mix) and click the template button in the selection bar. Templates are filed by type (Groups, Tables, To-do lists, Notes, Layouts) in the ⇧A menu, where they can also be deleted.
+- **Assets:** the **Assets** button at the bottom of the left toolbar lists every file uploaded or pasted onto the board, including ones whose cards were deleted, or for the whole project. Click or drag one to add it again.
+- **Notes:** the notes button in the top bar opens the board's scratchpad on the right, in the same column as Comments (switch with the tabs). Shared live with everyone who can edit the board, never shown to clients or viewers. Drag a note onto the board to make it a card.
+- **Paste anything:** a URL makes a link card, an image uploads (GIFs stay animated), and plain text makes a note.
 - **Connect:** select a card and drag any of the four dots (top, right, bottom, left) onto another card. Drop near an edge to attach to that side, or near the middle to let the line pick the best side. The **Line** tool (click two cards) also works.
 - **Edit a line:** click it to open its toolbar (colour, thickness, text, dash, line type, arrows). Drag the end circles to re-attach them to another card or side. On elbow lines, every segment has a blue handle: the middle one moves the bend, and the end segments slide along their card (or step out past its edge). Double-click a handle to reset it.
 - **Select (like Figma):** drag on empty canvas to box-select. Shift-drag or shift-click adds to the selection.
 - **Navigate:** hold **Space** and drag, or drag with the **middle mouse button**, to pan. Scrolling with a trackpad or wheel also pans. ⌘/Ctrl + scroll or pinch to zoom. ⇧1 fits the board to the screen.
-- **Resize:** drag the square handle at a selected card's bottom-right corner.
+- **Resize:** select a card and drag either side edge or the corner. Images, videos and links also have S/M/L/XL sizes in the selection bar, and notes, headings, to-dos and tables a text size (S to 2XL).
 - **Copy between boards:** ⌘C / ⌘V copies cards, including the lines between them, into any board.
 
 | Shortcut | Action |
@@ -44,6 +48,9 @@ edits, presence and cursors live.
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | Space + drag / middle-drag | Pan |
 | ⌘D | Duplicate |
+| ⌘G / ⇧⌘G | Group / ungroup |
+| ⇧A | Add menu at the cursor |
+| M | Comment mode |
 | ⌘A | Select all |
 | Delete / Backspace | Delete selection |
 | Arrows (⇧ for 10px) | Nudge |
@@ -158,6 +165,8 @@ server/
   access.js     Cloudflare Access token verification
   users.js      people, roles (admin/team/guest), inactivity settings
   visitors.js   share-link visitors (name + email, signed cookie)
+  importer.js   fetches pasted/dropped web media (keeps GIFs animated)
+  templates.js  saved templates (templates.json)
   permissions.js who can view/comment/edit which board; enforced in index.js
   seed.js       first-run example board
   demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)

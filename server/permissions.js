@@ -117,7 +117,13 @@ export class Permissions {
     if (this.isTeam(user)) return true;
     for (const b of this.store.boards.values()) {
       if (!this.boardLevel(user, b)) continue;
-      for (const it of Object.values(b.items)) if (it.url === url || it.thumb === url) return true;
+      for (const it of Object.values(b.items)) {
+        if (it.url === url || it.thumb === url) return true;
+        // Images and videos inside table cells.
+        if (it.table && JSON.stringify(it.table).includes(url)) return true;
+      }
+      // Files once added to the board (the Assets panel keeps them after their card is deleted).
+      if (b.assets?.some((a) => a.url === url)) return true;
     }
     return false;
   }

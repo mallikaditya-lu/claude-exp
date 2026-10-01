@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, socket } from '../api';
-import { COLORS, color, isInColumn, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
+import { COLORS, color, imageFromHtml, isInColumn, isMediaUrl, isUrl, kindForMime, maxZ, textToHtml, uid } from '../lib';
 import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
 import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
@@ -8,9 +8,13 @@ import { CanvasContext, type CanvasCtx } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
+import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
+import { ASSET_MIME, AssetsPanel, assetKind } from './AssetsPanel';
+import { NOTE_MIME } from './NotesPanel';
+import type { Asset } from '../api';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
-  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment,
+  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment, IconTemplate,
 } from './icons';
 
 interface Props {
@@ -38,7 +42,11 @@ const INTERACTIVE = 'input, textarea, button, a, select, video, audio, iframe, l
 const EDITABLE: ItemType[] = ['note', 'heading', 'link', 'column', 'board', 'image'];
 const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'];
 const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
-const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 80, board: 120 };
+const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 60, video: 120, link: 160, board: 120 };
+const TEXT_SIZED: ItemType[] = ['note', 'heading', 'todo', 'table'];
+const TEXT_SIZES: [string, number][] = [['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['2XL', 34]];
+const MEDIA_SIZED: ItemType[] = ['image', 'video', 'link', 'audio', 'file'];
+const MEDIA_SIZES: [string, number][] = [['S', 220], ['M', 380], ['L', 620], ['XL', 960]];
 
 function defaults(type: ItemType): Partial<Item> {
   switch (type) {
@@ -48,7 +56,7 @@ function defaults(type: ItemType): Partial<Item> {
     case 'todo': return { w: 260, title: '', todos: [{ id: uid(), text: '', done: false }] };
     case 'table': return { w: 480, title: '', table: [['', '', ''], ['', '', ''], ['', '', '']] };
     case 'board': return { w: 170 };
-    case 'column': return { w: 300, title: '', childIds: [] };
+    case 'column': return { w: 640, title: '', childIds: [], cols: 0 };
     case 'image': return { w: 320 };
     case 'video': return { w: 440 };
     case 'audio': return { w: 320 };
@@ -106,6 +114,14 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const dropRef = useRef(dropTarget);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [linking, setLinking] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
+  // The add menu on the canvas: screen position, board point, and the card a new line starts from.
+  const [quickAdd, setQuickAdd] = useState<{ left: number; top: number; at: { x: number; y: number }; from?: { id: string; side: Side } } | null>(null);
+  const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
+  // A line waiting for the card that a file picker / upload will create.
+  const pendingConnect = useRef<{ id: string; side: Side } | null>(null);
+  const isTeamHere = access === 'manage';
+  const [assetsOpen, setAssetsOpen] = useState(false);
   // Dragging one end of a selected line to re-attach it.
   const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -305,9 +321,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const pos = at ?? freeSpot(viewportCenter(), 170);
     try {
       const nb = await api.createBoard('Untitled board', board.id);
-      addItem('board', pos, { boardId: nb.id });
+      return addItem('board', pos, { boardId: nb.id });
     } catch (err) {
       notify((err as Error).message);
+      return '';
     }
   }, [addItem, board.id, freeSpot, notify, viewportCenter]);
 
@@ -324,6 +341,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         uploading: true, fileName: file.name, size: file.size, mime: file.type,
       });
       x += w + 24;
+      if (i === 0 && pendingConnect.current) {
+        const from = pendingConnect.current;
+        pendingConnect.current = null;
+        setTimeout(() => addConnection(from.id, id, from.side), 0);
+      }
       setUploads((u) => ({ ...u, [id]: 0 }));
       api.upload(file, (p) => setUploads((u) => ({ ...u, [id]: p })), board.id)
         .then((r) => updateItem(id, { uploading: false, url: r.url, size: r.size, mime: r.mime, fileName: r.name }))
@@ -333,7 +355,53 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         })
         .finally(() => setUploads((u) => { const n = { ...u }; delete n[id]; return n; }));
     });
-  }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
+  }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Bring in an image/GIF/video from the web by its original address, so GIFs stay animated.
+   * Falls back to the still image the browser offered (if any), or to a link card.
+   */
+  const importFromWeb = useCallback((url: string, at?: { x: number; y: number }, fallback?: File) => {
+    // Our own files (copied from another board) need no import.
+    if (url.startsWith(`${location.origin}/uploads/`)) {
+      const own = addItem('image', at, { url: url.slice(location.origin.length) });
+      setEditingId(null);
+      return own;
+    }
+    const pos = at ?? freeSpot(viewportCenter(), 360, 260);
+    const looksVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+    const id = addItem(looksVideo ? 'video' : 'image', pos, { uploading: true, fileName: `Importing from ${new URL(url).hostname.replace(/^www\./, '')}` });
+    setEditingId(null);
+    const drop = () => change((b) => { const next = { ...b.items }; delete next[id]; return { ...b, items: next }; });
+    api.importUrl(url, board.id)
+      .then((r) => {
+        if (!r.media) {
+          drop();
+          if (fallback) addFiles([fallback], pos);
+          else addItem('link', pos, { url });
+          return;
+        }
+        const type = kindForMime(r.mime, r.name);
+        // A GIF that arrives as video (Giphy, Tenor) keeps behaving like a GIF.
+        const loop = type === 'video' && !looksVideo;
+        updateItem(id, { type, uploading: false, url: r.url, size: r.size, mime: r.mime, fileName: r.name, source: r.sourceUrl, ...(loop ? { loop: true } : {}) });
+      })
+      .catch((err) => {
+        drop();
+        if (fallback) addFiles([fallback], pos);
+        // The site refused our server (hotlink protection etc.): show it straight from the site.
+        else if (/\.(gif|webp|png|jpe?g|avif)(\?|$)/i.test(url)) { addItem('image', pos, { url, source: url }); notify('Couldn’t save a copy, so this image loads from the original site'); }
+        else { addItem('link', pos, { url }); notify(err.message); }
+      });
+    return id;
+  }, [addFiles, addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
+
+  /** Put a file from the Assets panel back on the board. */
+  const addAsset = useCallback((a: Asset, at?: { x: number; y: number }) => {
+    const kind = assetKind(a);
+    addItem(kind, at, { url: a.url, fileName: a.name, size: a.size, mime: a.mime });
+    setEditingId(null);
+  }, [addItem]);
 
   const pickFiles = (accept: string, at?: { x: number; y: number }) => {
     pendingFilePos.current = at ?? null;
@@ -466,7 +534,9 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       items: { ...bb.items, ...Object.fromEntries(clones.map((c) => [c.id, c])) },
       connections: { ...bb.connections, ...Object.fromEntries(conns.map((c) => [c.id, c])) },
     }));
-    setSelection(new Set(clones.filter((c) => !c.parentId).map((c) => c.id)));
+    const top = clones.filter((c) => !c.parentId).map((c) => c.id);
+    setSelection(new Set(top));
+    return top;
   }, [change, getBoard, me]);
 
   const collectSelection = useCallback(() => {
@@ -483,6 +553,150 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const conns = Object.values(b.connections).filter((c) => ids.has(c.from) && ids.has(c.to));
     return { items: list, connections: conns };
   }, [getBoard]);
+
+  // ---------- quick-add menu ----------
+  const openQuickAdd = useCallback((clientX: number, clientY: number, from?: { id: string; side: Side }) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const r = root.getBoundingClientRect();
+    const at = toWorld(clientX, clientY);
+    setQuickAdd({
+      left: clamp(clientX - r.left + 8, 8, r.width - 280),
+      top: clamp(clientY - r.top + 8, 8, r.height - 400),
+      at,
+      from,
+    });
+    if (isTeamHere) api.templates().then(setTemplates).catch(() => setTemplates([]));
+  }, [isTeamHere, toWorld]);
+
+  const closeQuickAdd = useCallback(() => {
+    setQuickAdd(null);
+    setLinking(null);
+  }, []);
+
+  /** Insert a saved template with its top-left corner at a board point. Returns the new top-level card ids. */
+  const insertTemplate = useCallback(async (id: string, at: { x: number; y: number }) => {
+    try {
+      const t = await api.template(id);
+      return insertClones(t.items, t.connections, { x: Math.round(at.x), y: Math.round(at.y) }) || [];
+    } catch (err) {
+      notify((err as Error).message);
+      return [];
+    }
+  }, [insertClones, notify]);
+
+  const pickQuick = useCallback(async (pick: QuickPick) => {
+    const q = quickAdd;
+    setQuickAdd(null);
+    setLinking(null);
+    if (!q) return;
+    const { from } = q;
+    // A card made from a line sits beside the point it was dropped at, facing the line.
+    const at = { ...q.at };
+    if (from?.side === 'right') at.x += 140;
+    if (from?.side === 'left') at.x -= 140;
+    if (from?.side === 'bottom') at.y += 30;
+    if (from?.side === 'top') at.y -= 120;
+    let id = '';
+    if (pick.kind === 'tool') {
+      const tool = pick.tool;
+      if (tool === 'comment' || tool === 'line') { applyTool(tool, q.at); return; }
+      if (tool === 'image' || tool === 'upload') {
+        pendingConnect.current = from || null;
+        pickFiles(tool === 'image' ? 'image/*' : '', at);
+        return;
+      }
+      if (tool === 'board') id = (await addBoard(at)) || '';
+      else id = addItem(tool, at);
+    } else if (pick.kind === 'link') {
+      id = isMediaUrl(pick.url) ? importFromWeb(pick.url, at) || '' : addItem('link', at, { url: pick.url });
+      setEditingId(null);
+    } else if (pick.kind === 'note') {
+      id = addItem('note', at, { text: textToHtml(pick.text) });
+      setEditingId(null);
+    } else if (pick.kind === 'template') {
+      const ids = await insertTemplate(pick.id, from ? at : q.at);
+      id = ids[0] || '';
+    }
+    if (from && id) addConnection(from.id, id, from.side);
+  }, [addBoard, addConnection, addItem, applyTool, importFromWeb, insertTemplate, quickAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Save the selection as a template (team only). */
+  const saveTemplate = useCallback(async () => {
+    const data = collectSelection();
+    if (!data?.items.length) return;
+    const name = window.prompt('Template name', data.items.length === 1 ? (data.items[0].title || '') : '')?.trim();
+    if (name === undefined) return;
+    try {
+      const t = await api.saveTemplate(name, data.items, data.connections);
+      notify(`Saved “${t.name}” in ${t.category}. Press ⇧A on any board to use it.`);
+    } catch (err) {
+      notify((err as Error).message);
+    }
+  }, [notify]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** ⌘G: put the selected cards into a new group, keeping their reading order. */
+  const groupSelection = useCallback(() => {
+    const b = getBoard();
+    if (!b) return;
+    const picked = [...selectionRef.current].map((id) => b.items[id])
+      .filter((it): it is Item => Boolean(it) && it.type !== 'column' && !isInColumn(it, b.items) && Boolean(rectsRef.current[it.id]));
+    if (!picked.length) { notify('Select some cards first, then press ⌘G'); return; }
+    const rs = picked.map((it) => rectsRef.current[it.id]);
+    const x0 = Math.min(...rs.map((r) => r.x));
+    const y0 = Math.min(...rs.map((r) => r.y));
+    const x1 = Math.max(...rs.map((r) => r.x + r.w));
+    const avgW = rs.reduce((s, r) => s + r.w, 0) / rs.length;
+    const avgH = rs.reduce((s, r) => s + r.h, 0) / rs.length;
+    // Rows: cards whose tops are within half a card of each other; then left to right.
+    const rows: Item[][] = [];
+    for (const it of [...picked].sort((a, c) => rectsRef.current[a.id].y - rectsRef.current[c.id].y)) {
+      const row = rows[rows.length - 1];
+      if (row && rectsRef.current[it.id].y - rectsRef.current[row[0].id].y < avgH / 2) row.push(it);
+      else rows.push([it]);
+    }
+    const order = rows.flatMap((row) => row.sort((a, c) => rectsRef.current[a.id].x - rectsRef.current[c.id].x));
+    const cols = Math.max(1, Math.min(6, Math.round((x1 - x0) / (avgW + 10))));
+    const w = Math.round(Math.max(300, cols * (avgW + 10) + 18));
+    const group: Item = {
+      id: uid(), type: 'column', title: '', cols, x: Math.round(x0 - 9), y: Math.round(y0 - 46), w,
+      z: maxZ(b.items) + 1, childIds: order.map((it) => it.id), createdBy: me, createdAt: Date.now(),
+    };
+    change((bb) => {
+      const next = { ...bb.items, [group.id]: group };
+      for (const it of order) next[it.id] = { ...next[it.id], parentId: group.id };
+      return { ...bb, items: next };
+    });
+    setSelection(new Set([group.id]));
+    setEditingId(group.id);
+  }, [change, getBoard, me, notify]);
+
+  /** ⇧⌘G: release a group's cards where they are and remove the group. */
+  const ungroupSelection = useCallback(() => {
+    const b = getBoard();
+    if (!b) return;
+    const groups = [...selectionRef.current].map((id) => b.items[id]).filter((it) => it?.type === 'column');
+    if (!groups.length) return;
+    const released: string[] = [];
+    change((bb) => {
+      const next = { ...bb.items };
+      let z = maxZ(next);
+      for (const g of groups) {
+        for (const cid of g.childIds || []) {
+          const child = next[cid];
+          if (!child) continue;
+          const r = rectsRef.current[cid];
+          next[cid] = { ...child, parentId: null, x: Math.round(r?.x ?? g.x), y: Math.round(r?.y ?? g.y), w: Math.round(r?.w ?? child.w), z: ++z };
+          released.push(cid);
+        }
+        delete next[g.id];
+      }
+      const gone = new Set(groups.map((g) => g.id));
+      const conns = Object.fromEntries(Object.entries(bb.connections).filter(([, c]) => !gone.has(c.from) && !gone.has(c.to)));
+      return { ...bb, items: next, connections: conns };
+    });
+    setSelection(new Set(released));
+  }, [change, getBoard]);
 
   const duplicate = useCallback(() => {
     const data = collectSelection();
@@ -539,7 +753,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const key = `drag-${uid()}`;
     let moved = false;
     let origins: Record<string, { x: number; y: number }> = {};
-    const canDrop = ids.length === 1 && !['column', 'board'].includes(item.type);
+    // Any cards except groups can be dropped into a group, several at once.
+    const canDrop = ids.every((id) => b0.items[id]?.type !== 'column');
 
     const onMove = (ev: PointerEvent) => {
       if (!moved) {
@@ -576,8 +791,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         for (const col of cols) {
           const r = rectsRef.current[col.id];
           if (!r || p.x < r.x || p.x > r.x + r.w || p.y < r.y - 10 || p.y > r.y + r.h + 10) continue;
-          const kids = (col.childIds || []).filter((c) => c !== item.id && rectsRef.current[c]);
-          const index = kids.filter((c) => { const cr = rectsRef.current[c]; return cr.y + cr.h / 2 < p.y; }).length;
+          const kids = (col.childIds || []).filter((c) => !ids.includes(c) && rectsRef.current[c]);
+          // Reading order in the grid: rows above the pointer, then cards to its left in the same row.
+          const index = kids.filter((c) => {
+            const cr = rectsRef.current[c];
+            if (cr.y + cr.h < p.y) return true;
+            return cr.y <= p.y && cr.x + cr.w / 2 < p.x;
+          }).length;
           target = { col: col.id, index };
           break;
         }
@@ -599,10 +819,14 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         change((b) => {
           const col = b.items[t.col];
           if (!col) return b;
-          const kids = (col.childIds || []).filter((x) => x !== item.id);
-          kids.splice(t.index, 0, item.id);
-          return { ...b, items: { ...b.items, [col.id]: { ...col, childIds: kids }, [item.id]: { ...b.items[item.id], parentId: col.id } } };
+          const moving = ids.filter((id) => b.items[id]).sort((a, c) => (b.items[a].y - b.items[c].y) || (b.items[a].x - b.items[c].x));
+          const kids = (col.childIds || []).filter((x) => !moving.includes(x));
+          kids.splice(t.index, 0, ...moving);
+          const next = { ...b.items, [col.id]: { ...col, childIds: kids } };
+          for (const id of moving) next[id] = { ...next[id], parentId: col.id };
+          return { ...b, items: next };
         }, key);
+        setSelection(new Set(ids));
       }
       if (!moved && already && ['note', 'heading'].includes(item.type)) setEditingId(item.id);
     };
@@ -617,17 +841,20 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     else if (canEdit && EDITABLE.includes(item.type)) setEditingId(item.id);
   };
 
-  const startResize = (e: React.PointerEvent, item: Item) => {
+  /** Resize from the right edge/corner, or from the left edge (which also moves the card). */
+  const startResize = (e: React.PointerEvent, item: Item, side: 'left' | 'right' = 'right') => {
     e.stopPropagation();
     e.preventDefault();
     const sx = e.clientX;
     const w0 = item.w;
+    const x0 = item.x;
     const key = `resize-${uid()}`;
     const min = MIN_W[item.type] ?? 160;
     setDragging(true);
     const onMove = (ev: PointerEvent) => {
-      const w = Math.round(clamp(w0 + (ev.clientX - sx) / viewRef.current.zoom, min, 2400));
-      updateItem(item.id, { w }, key);
+      const d = (ev.clientX - sx) / viewRef.current.zoom;
+      const w = Math.round(clamp(side === 'left' ? w0 - d : w0 + d, min, 4000));
+      updateItem(item.id, side === 'left' ? { w, x: Math.round(x0 + w0 - w) } : { w }, key);
     };
     const onUp = () => {
       setDragging(false);
@@ -648,10 +875,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      setLinking(null);
       setDragging(false);
       const hit = cardAt(ev.clientX, ev.clientY);
-      if (hit) addConnection(item.id, hit.id, side, hit.side);
+      if (hit) { setLinking(null); addConnection(item.id, hit.id, side, hit.side); return; }
+      // Dropped on empty board: offer to add a card there, connected to this one.
+      const moved = Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > 24;
+      if (!moved || !canEdit) { setLinking(null); return; }
+      openQuickAdd(ev.clientX, ev.clientY, { id: item.id, side });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -816,10 +1046,18 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const p = toWorld(e.clientX, e.clientY);
     const tool = e.dataTransfer.getData(TOOL_MIME) as Tool;
     if (tool) { applyTool(tool, p); return; }
+    const note = e.dataTransfer.getData(NOTE_MIME);
+    if (note) { addItem('note', p, { text: textToHtml(note) }); setEditingId(null); return; }
+    const asset = e.dataTransfer.getData(ASSET_MIME);
+    if (asset) { try { addAsset(JSON.parse(asset), p); } catch { /* not ours */ } return; }
     const files = [...e.dataTransfer.files];
+    // Dragged from a website: use the original image (keeps GIFs animated).
+    const webImage = imageFromHtml(e.dataTransfer.getData('text/html'));
+    if (webImage) { importFromWeb(webImage, p, files[0]); return; }
     if (files.length) { addFiles(files, p); return; }
     const uri = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')).split('\n')[0]?.trim();
-    if (uri && isUrl(uri)) addItem('link', p, { url: uri });
+    if (uri && isUrl(uri) && isMediaUrl(uri)) importFromWeb(uri, p);
+    else if (uri && isUrl(uri)) addItem('link', p, { url: uri });
     else if (uri) addItem('note', p, { text: textToHtml(uri) });
   };
 
@@ -838,6 +1076,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const paste = (e: ClipboardEvent) => {
       if (!canEdit || isTyping(e.target) || isTyping(document.activeElement)) return;
       const files = [...(e.clipboardData?.files || [])];
+      // "Copy image" on a website puts a still PNG on the clipboard, plus HTML pointing at the
+      // original. Import the original so GIFs and WebPs stay animated; the PNG is the fallback.
+      const webImage = imageFromHtml(e.clipboardData?.getData('text/html') || '');
+      if (webImage) { e.preventDefault(); importFromWeb(webImage, undefined, files[0]); return; }
       if (files.length) { e.preventDefault(); addFiles(files); return; }
       const text = e.clipboardData?.getData('text/plain')?.trim();
       if (!text) return;
@@ -853,7 +1095,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         } catch { notify('Could not paste those cards'); }
         return;
       }
-      if (isUrl(text)) addItem('link', undefined, { url: text });
+      if (isUrl(text) && isMediaUrl(text)) importFromWeb(text);
+      else if (isUrl(text)) addItem('link', undefined, { url: text });
       else addItem('note', undefined, { text: textToHtml(text) });
       setEditingId(null);
     };
@@ -865,7 +1108,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       document.removeEventListener('cut', cut);
       document.removeEventListener('paste', paste);
     };
-  }, [addFiles, addItem, collectSelection, deleteSelection, insertClones, notify, viewportCenter]);
+  }, [addFiles, addItem, collectSelection, deleteSelection, importFromWeb, insertClones, notify, viewportCenter]);
 
   // ---------- keyboard ----------
   useEffect(() => {
@@ -887,6 +1130,15 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       if (!canEdit) return;
       if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); return; }
       if (mod && key === 'd') { e.preventDefault(); duplicate(); return; }
+      if (e.shiftKey && !mod && key === 'a') {
+        e.preventDefault();
+        const r = rootRef.current!.getBoundingClientRect();
+        const p = lastPointer.current;
+        const inside = p && p.x > r.left && p.x < r.right && p.y > r.top && p.y < r.bottom;
+        openQuickAdd(inside ? p.x : r.left + r.width / 2, inside ? p.y : r.top + r.height / 2);
+        return;
+      }
+      if (mod && key === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
       if (mod && key === 'a') {
         e.preventDefault();
         const b = getBoard()!;
@@ -926,6 +1178,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   // ---------- live cursors ----------
   const lastCursor = useRef(0);
   const onPointerMove = (e: React.PointerEvent) => {
+    lastPointer.current = { x: e.clientX, y: e.clientY };
     const now = performance.now();
     if (now - lastCursor.current < 60) return;
     lastCursor.current = now;
@@ -959,7 +1212,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           selected && 'is-selected', isEditing && 'is-editing', inColumn && 'in-column',
           lineFrom === item.id && 'is-line-source',
         ].filter(Boolean).join(' ')}
-        style={inColumn ? undefined : { left: item.x, top: item.y, width: item.w, zIndex: item.z }}
+        style={inColumn ? (item.fontSize ? { fontSize: item.fontSize } : undefined) : { left: item.x, top: item.y, width: item.w, zIndex: item.z, ...(item.fontSize ? { fontSize: item.fontSize } : {}) }}
         onPointerDown={(e) => onItemPointerDown(e, item)}
         onDoubleClick={(e) => onItemDoubleClick(e, item)}
       >
@@ -972,6 +1225,12 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         />
         {canEdit && single && !inColumn && !dragging && (
           <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
+        )}
+        {canEdit && !inColumn && !dragging && (item.type === 'column' || single) && (
+          <>
+            <div className="edge-handle is-left" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'left')} />
+            <div className="edge-handle is-right" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'right')} />
+          </>
         )}
         {canEdit && single && !dragging && !isEditing && SIDES.map((side) => (
           <div
@@ -987,6 +1246,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
 
   const ctx: CanvasCtx = {
     me,
+    boardId: board.id,
+    notify,
     items,
     boards,
     uploadProgress: uploads,
@@ -1203,6 +1464,64 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                     <span className="sep" />
                   </div>
                 )}
+                {single?.type === 'column' && (
+                  <>
+                    <span className="bar-label">Columns</span>
+                    <div className="seg compact">
+                      {[0, 1, 2, 3, 4].map((n) => (
+                        <button
+                          key={n}
+                          className={(single.cols ?? 1) === n ? 'is-on' : ''}
+                          title={n === 0 ? 'Auto: as many as fit; widen the group for more' : `${n} column${n === 1 ? '' : 's'}`}
+                          onClick={() => updateItem(single.id, { cols: n })}
+                        >
+                          {n === 0 ? 'Auto' : n}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="text-btn" title="Ungroup (⇧⌘G)" onClick={ungroupSelection}>Ungroup</button>
+                    <span className="sep" />
+                  </>
+                )}
+                {!single && selItems.length > 1 && selItems.every((it) => it.type !== 'column') && (
+                  <>
+                    <button className="text-btn strong" title="Group (⌘G)" onClick={groupSelection}>Group</button>
+                    <span className="sep" />
+                  </>
+                )}
+                {selItems.length > 0 && selItems.every((it) => TEXT_SIZED.includes(it.type)) && (
+                  <>
+                    <span className="bar-label">Text</span>
+                    <div className="seg compact">
+                      {TEXT_SIZES.map(([label, px]) => (
+                        <button
+                          key={label}
+                          className={(selItems[0].fontSize ?? 14) === px ? 'is-on' : ''}
+                          title={`${px}px`}
+                          onClick={() => change((b) => {
+                            const next = { ...b.items };
+                            for (const it of selItems) next[it.id] = { ...next[it.id], fontSize: px === 14 ? undefined : px };
+                            return { ...b, items: next };
+                          })}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="sep" />
+                  </>
+                )}
+                {single && MEDIA_SIZED.includes(single.type) && !isInColumn(single, items) && (
+                  <>
+                    <span className="bar-label">Size</span>
+                    <div className="seg compact">
+                      {MEDIA_SIZES.map(([label, w]) => (
+                        <button key={label} className={Math.abs(single.w - w) < 2 ? 'is-on' : ''} title={`${w}px wide (or drag the edges)`} onClick={() => updateItem(single.id, { w })}>{label}</button>
+                      ))}
+                    </div>
+                    <span className="sep" />
+                  </>
+                )}
                 {single?.type === 'board' && single.boardId && (
                   <button className="text-btn strong" onClick={() => openBoard(single.boardId!)}>Open</button>
                 )}
@@ -1216,6 +1535,9 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 )}
                 {single?.url && (
                   <a className="icon-btn" title="Open in new tab" href={single.url} target="_blank" rel="noopener noreferrer"><IconExternal size={16} /></a>
+                )}
+                {isTeamHere && (
+                  <button className="icon-btn" title="Save as template" onClick={saveTemplate}><IconTemplate size={16} /></button>
                 )}
                 <button className="icon-btn" title="Bring to front" onClick={bringToFront}><IconFront size={16} /></button>
                 <button className="icon-btn" title="Duplicate (⌘D)" onClick={duplicate}><IconCopy size={16} /></button>
@@ -1239,6 +1561,21 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
               onDelete={deleteSelection}
             />
           </div>
+        )}
+
+        {quickAdd && (
+          <QuickAdd
+            left={quickAdd.left}
+            top={quickAdd.top}
+            tools={(['note', 'heading', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
+            templates={isTeamHere ? templates : null}
+            onPick={pickQuick}
+            onDeleteTemplate={isTeamHere ? (t) => {
+              if (!window.confirm(`Delete the template “${t.name}”? Boards that used it keep their cards.`)) return;
+              api.deleteTemplate(t.id).then(() => setTemplates((l) => (l || []).filter((x) => x.id !== t.id))).catch((err) => notify(err.message));
+            } : undefined}
+            onClose={closeQuickAdd}
+          />
         )}
 
         {comments && (
@@ -1269,7 +1606,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         </div>
       </div>
 
-      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} />}
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} />}
+      {canEdit && assetsOpen && (
+        <AssetsPanel boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
+      )}
       {!canEdit && canComment && comments && (
         <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
           <button className={`tool ${commentMode ? 'is-active' : ''}`} title="Comment (M)" onClick={toggleCommentMode}>

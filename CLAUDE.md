@@ -34,7 +34,10 @@ Read README.md for features and configuration. This file covers conventions and 
 3. Cloudflare DNS plus Access (Google login for the team), replacing `APP_PASSWORD`. App side done (server/access.js, users.js; env CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, PUBLIC_URL). Test with scripts/fake-access.mjs (+ CF_ACCESS_CERTS_URL).
 4. ✅ Roles and per-project access: admin/team/guest (server/users.js), project members as editor/commenter/viewer (store.js), all checks in server/permissions.js, Admin page (#/admin), Share dialog, inactive-guest sweep.
    Board-level sharing: board.members (inherited by sub-boards) and share links (board.share: token, mode view|comment, requireIdentity). Links live at `/s/<token>` (src/components/ShareApp.tsx) and need `SHARE_URL` on a hostname WITHOUT Cloudflare Access (planned: share.littleunusual.xyz). Link visitors (server/visitors.js) are `{visitor: true}` users: their email is typed in, never trusted for project/board invites.
-   Comments: Figma-style pinned threads in `board.threads` (src/components/Comments.tsx), saved through `/api/boards/:id/threads…` (one request per change, broadcast as `upsertThreads`/`removeThreads` patches), never through card patches. Old `type: 'comment'` cards are converted on load (store.js migrateComments). Next: version history, search.
+   Comments: Figma-style pinned threads in `board.threads` (src/components/Comments.tsx), saved through `/api/boards/:id/threads…` (one request per change, broadcast as `upsertThreads`/`removeThreads` patches), never through card patches. Old `type: 'comment'` cards are converted on load (store.js migrateComments).
+   Groups are stored as `type: 'column'` with `cols` (0 = auto, unset = 1 for old columns); grid layout in Containers.tsx.
+   Board side data, all outside card patches: `board.assets` (every upload/import, `/api/boards/:id/assets`), `board.notes` (editors only; never sent to commenters/viewers: GET strips it and `sendNotes` filters the WebSocket), templates in `templates.json` (team only).
+   Web media import: `/api/import-url` (server/importer.js). Tests fetch from localhost with `TEST_ALLOW_PRIVATE_FETCH=1`; never set it in production. Next: version history, search.
 5. Later: video compression and thumbnails (ffmpeg), version history, search
 
 ## Branches

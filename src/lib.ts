@@ -96,6 +96,25 @@ export function textToHtml(text: string) {
   return text.split(/\n/).map((l) => `<p>${esc(l) || '<br>'}</p>`).join('');
 }
 
+/** Links that are (or lead straight to) an image, GIF or video: these get imported, not shown as link cards. */
+export function isMediaUrl(s: string) {
+  try {
+    const u = new URL(s.trim());
+    if (/\.(gif|webp|png|jpe?g|avif|mp4|webm|mov|m4v)$/i.test(u.pathname)) return true;
+    return /(^|\.)(giphy\.com|tenor\.com|gfycat\.com)$/i.test(u.hostname) || /^i\.imgur\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** The original image a website put on the clipboard / drag (browsers also add a re-encoded PNG). */
+export function imageFromHtml(html: string) {
+  if (!html || !/<img/i.test(html)) return '';
+  const img = new DOMParser().parseFromString(html, 'text/html').querySelector('img');
+  const src = img?.getAttribute('src') || img?.getAttribute('data-src') || '';
+  return /^https?:\/\//i.test(src) ? src : '';
+}
+
 export function kindForMime(mime: string, name = ''): Item['type'] {
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
@@ -179,6 +198,13 @@ export function resolveEmbed(raw?: string): Embed | null {
 }
 
 // ---------- board helpers ----------
+/** How many grid columns a group shows at its current width. */
+export function groupCols(item: Item) {
+  if (item.cols === undefined) return 1;
+  if (item.cols > 0) return Math.min(8, item.cols);
+  return Math.max(1, Math.min(8, Math.floor((item.w - 16) / 250)));
+}
+
 export function isInColumn(item: Item, items: Record<string, Item>) {
   if (!item.parentId) return false;
   const parent = items[item.parentId];
@@ -219,8 +245,15 @@ export function applyPatch(board: Board, patch: Patch): Board {
     for (const t of patch.upsertThreads || []) threads[t.id] = t;
     for (const id of patch.removeThreads || []) delete threads[id];
   }
+  let notes = board.notes;
+  if (patch.upsertNotes?.length || patch.removeNotes?.length) {
+    notes = { ...(board.notes || {}) };
+    for (const n of patch.upsertNotes || []) notes[n.id] = n;
+    for (const id of patch.removeNotes || []) delete notes[id];
+  }
   return {
     ...board,
+    notes,
     title: patch.title ?? board.title,
     background: patch.background !== undefined ? patch.background : board.background,
     projectId: patch.projectId !== undefined ? patch.projectId : board.projectId,

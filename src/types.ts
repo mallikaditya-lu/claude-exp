@@ -52,10 +52,20 @@ export interface Item {
   mime?: string;
   caption?: string;
   uploading?: boolean;
+  /** Video that behaves like a GIF: plays muted on a loop, no controls (e.g. imported from Giphy). */
+  loop?: boolean;
+  /** Where an imported file came from. */
+  source?: string;
   todos?: TodoEntry[];
   table?: string[][];
+  /** Table column widths, as percentages of the table width. */
+  colWidths?: number[];
   boardId?: string;
   childIds?: string[];
+  /** Groups (type 'column'): columns in the grid. 0 = auto (fits the width); unset = 1 (older columns). */
+  cols?: number;
+  /** Text size in px for text cards (notes, headings, to-dos, tables). Unset = 14. */
+  fontSize?: number;
   comments?: CommentEntry[];
   createdBy?: string;
   createdAt?: number;
@@ -86,6 +96,9 @@ export interface Connection {
   arrow?: 'none' | 'end' | 'both';
 }
 
+/** A note in the board's Notes panel (editors' scratchpad, not on the canvas). */
+export interface BoardNote { id: string; text: string; color?: string; author: string; authorEmail?: string | null; createdAt: number; updatedAt: number; editedBy?: string }
+
 export interface Board {
   id: string;
   title: string;
@@ -98,6 +111,8 @@ export interface Board {
   items: Record<string, Item>;
   connections: Record<string, Connection>;
   threads?: Record<string, Thread>;
+  /** Only sent to people who can edit the board. */
+  notes?: Record<string, BoardNote>;
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -160,6 +175,8 @@ export interface Patch {
   /** Comment threads only ever arrive from the server (they're saved through their own API). */
   upsertThreads?: Thread[];
   removeThreads?: string[];
+  upsertNotes?: BoardNote[];
+  removeNotes?: string[];
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }

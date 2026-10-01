@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import {
-  IconBoard, IconColumn, IconComment, IconHeading, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
+  IconBoard, IconColumn, IconComment, IconFolder, IconHeading, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
 } from './icons';
 
 export type Tool =
@@ -8,21 +8,23 @@ export type Tool =
 
 export const TOOL_MIME = 'application/x-rb-tool';
 
-const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
+export const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { id: 'note', label: 'Note', icon: <IconNote />, hint: 'Rich text note (N)' },
   { id: 'heading', label: 'Heading', icon: <IconHeading />, hint: 'Coloured section label (H)' },
   { id: 'link', label: 'Link', icon: <IconLink />, hint: 'Web link or embed: YouTube, Spotify, Figma… (L)' },
   { id: 'todo', label: 'To-do', icon: <IconTodo />, hint: 'Checklist (T)' },
   { id: 'line', label: 'Line', icon: <IconLine />, hint: 'Connect two cards (C)' },
   { id: 'board', label: 'Board', icon: <IconBoard />, hint: 'Nested board (B)' },
-  { id: 'column', label: 'Column', icon: <IconColumn />, hint: 'Group cards in a column' },
+  { id: 'column', label: 'Group', icon: <IconColumn />, hint: 'Group: cards side by side in a resizable area (select cards and press ⌘G)' },
   { id: 'table', label: 'Table', icon: <IconTable />, hint: 'Table, e.g. a script or shot list' },
   { id: 'comment', label: 'Comment', icon: <IconComment />, hint: 'Comment: click anywhere to pin one (M)' },
   { id: 'image', label: 'Add image', icon: <IconImage />, hint: 'Upload images' },
   { id: 'upload', label: 'Upload', icon: <IconUpload />, hint: 'Upload video, audio, PDFs or any file' },
 ];
 
-export function Toolbar({ onTool, lineMode, commentMode }: { onTool: (t: Tool) => void; lineMode: boolean; commentMode: boolean }) {
+export function Toolbar({ onTool, lineMode, commentMode, assetsOpen, onAssets }: {
+  onTool: (t: Tool) => void; lineMode: boolean; commentMode: boolean; assetsOpen: boolean; onAssets: () => void;
+}) {
   return (
     <nav className="toolbar" onPointerDown={(e) => e.stopPropagation()}>
       {TOOLS.map((t) => (
@@ -41,6 +43,11 @@ export function Toolbar({ onTool, lineMode, commentMode }: { onTool: (t: Tool) =
           <span className="tool-label">{t.label}</span>
         </button>
       ))}
+      <div className="tool-sep" />
+      <button className={`tool ${assetsOpen ? 'is-active' : ''}`} title="Assets: every file added to this board" onClick={onAssets}>
+        <span className="tool-icon"><IconFolder /></span>
+        <span className="tool-label">Assets</span>
+      </button>
     </nav>
   );
 }

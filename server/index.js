@@ -15,6 +15,8 @@ import { AccessVerifier } from './access.js';
 import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
 import { Permissions, MEMBER_ROLES, atLeast, isOwnComment } from './permissions.js';
 import { Visitors } from './visitors.js';
+import { importMedia } from './importer.js';
+import { Templates } from './templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -43,6 +45,7 @@ const store = new Store(DATA_DIR);
 const users = new Users(DATA_DIR);
 const perms = new Permissions(store, users);
 const visitors = new Visitors(DATA_DIR);
+const templates = new Templates(DATA_DIR);
 
 // Google Drive storage is used when both variables are set; otherwise files stay on local disk.
 let drive = null;
@@ -480,9 +483,11 @@ app.get('/api/boards/:id', (req, res) => {
   const board = store.get(req.params.id);
   // Same answer for "missing" and "not yours", so board ids can't be probed.
   if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
-  // Invites and the secret link are only for the Share dialog.
-  const { members: _m, share: _s, ...rest } = board;
-  res.json({ ...rest, access: perms.boardLevel(req.user, board) });
+  // Invites and the secret link are only for the Share dialog; assets have their own endpoint.
+  const { members: _m, share: _s, assets: _a, notes, ...rest } = board;
+  const access = perms.boardLevel(req.user, board);
+  // Notes are the editors' scratchpad: clients and viewers never get them.
+  res.json({ ...rest, ...(atLeast(access, 'edit') ? { notes: notes || {} } : {}), access });
 });
 
 app.post('/api/boards/:id/patch', (req, res) => {
@@ -499,6 +504,104 @@ app.post('/api/boards/:id/patch', (req, res) => {
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
   scheduleIndexBroadcast();
   res.json({ version: result.board.version });
+});
+
+// ---------- assets: every file uploaded or imported to a board (the Assets panel) ----------
+const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'file']);
+
+function boardAssets(board) {
+  const out = new Map();
+  for (const a of board.assets || []) out.set(a.url, { url: a.url, name: a.name, mime: a.mime, size: a.size, at: a.at, by: a.by || null });
+  for (const it of Object.values(board.items)) {
+    if (MEDIA_TYPES.has(it.type) && typeof it.url === 'string' && it.url.startsWith('/uploads/') && !out.has(it.url)) {
+      out.set(it.url, { url: it.url, name: it.fileName || it.url.split('/').pop(), mime: it.mime || '', size: it.size || 0, at: it.createdAt || board.createdAt, by: it.createdBy || null });
+    }
+  }
+  const used = new Set(Object.values(board.items).map((it) => it.url).filter(Boolean));
+  return [...out.values()].map((a) => ({ ...a, onBoard: used.has(a.url), boardId: board.id, boardTitle: board.title }));
+}
+
+app.get('/api/boards/:id/assets', (req, res) => {
+  const board = store.get(req.params.id);
+  if (!board || !perms.can(req.user, board, 'edit')) return res.status(404).json({ error: 'Board not found' });
+  const boards = req.query.scope === 'project' && board.projectId
+    ? [...store.boards.values()].filter((b) => b.projectId === board.projectId && perms.can(req.user, b, 'view'))
+    : [board];
+  const seen = new Set();
+  const list = boards.flatMap(boardAssets).sort((a, b) => (b.at || 0) - (a.at || 0)).filter((a) => !seen.has(a.url) && seen.add(a.url));
+  res.json(list);
+});
+
+// ---------- notes (editors' scratchpad beside the canvas; never sent to commenters/viewers) ----------
+// Kept as typed (no trimming: notes are saved while you type).
+const noteText = (v) => String(v ?? '').replace(/\r\n/g, '\n').slice(0, 20000);
+
+function noteAccess(req, res) {
+  const board = store.get(req.params.id);
+  if (!board || !perms.can(req.user, board, 'view')) { res.status(404).json({ error: 'Board not found' }); return null; }
+  if (!perms.can(req.user, board, 'edit')) { res.status(403).json({ error: 'Only editors can use board notes' }); return null; }
+  return board;
+}
+
+function sendNotes(boardId, patch) {
+  // Only people who can edit the board receive notes.
+  for (const [ws, info] of clients) {
+    if (info.boardId === boardId && perms.can(info.user, store.get(boardId), 'edit')) send(ws, { t: 'patch', boardId, patch });
+  }
+}
+
+app.post('/api/boards/:id/notes', (req, res) => {
+  const board = noteAccess(req, res);
+  if (!board) return;
+  const user = actor(req);
+  const note = { id: crypto.randomUUID(), text: noteText(req.body?.text), color: typeof req.body?.color === 'string' ? req.body.color.slice(0, 20) : 'yellow', author: user.name, authorEmail: user.email || null, createdAt: Date.now(), updatedAt: Date.now() };
+  store.saveNote(board.id, note);
+  sendNotes(board.id, { upsertNotes: [note] });
+  res.status(201).json(note);
+});
+
+app.patch('/api/boards/:id/notes/:nid', (req, res) => {
+  const board = noteAccess(req, res);
+  if (!board) return;
+  const prev = board.notes?.[req.params.nid];
+  if (!prev) return res.status(404).json({ error: 'This note was deleted' });
+  const note = { ...prev, updatedAt: Date.now(), editedBy: actor(req).name };
+  if (req.body?.text !== undefined) note.text = noteText(req.body.text);
+  if (typeof req.body?.color === 'string') note.color = req.body.color.slice(0, 20);
+  store.saveNote(board.id, note);
+  sendNotes(board.id, { upsertNotes: [note] });
+  res.json(note);
+});
+
+app.delete('/api/boards/:id/notes/:nid', (req, res) => {
+  const board = noteAccess(req, res);
+  if (!board) return;
+  if (!store.removeNote(board.id, req.params.nid)) return res.status(404).json({ error: 'This note was deleted' });
+  sendNotes(board.id, { removeNotes: [req.params.nid] });
+  res.json({ ok: true });
+});
+
+// ---------- templates (team only: they can hold content from any project) ----------
+app.get('/api/templates', needTeam, (_req, res) => res.json(templates.summaries()));
+
+app.get('/api/templates/:id', needTeam, (req, res) => {
+  const t = templates.get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found' });
+  res.json(t);
+});
+
+app.post('/api/templates', needTeam, (req, res) => {
+  try {
+    const t = templates.create(req.body || {}, req.user.name || req.user.email || 'team');
+    res.status(201).json({ id: t.id, name: t.name, category: t.category });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/templates/:id', needTeam, (req, res) => {
+  if (!templates.remove(req.params.id)) return res.status(404).json({ error: 'Template not found' });
+  res.json({ ok: true });
 });
 
 // ---------- comments (Figma-style pinned threads) ----------
@@ -704,13 +807,49 @@ app.post('/api/uploads/:id/complete', async (req, res) => {
       folderKey: project ? project.id : 'unfiled',
       folderName: project ? project.name : 'Unfiled',
     });
-    if (!recentUploads.has(s.owner)) recentUploads.set(s.owner, new Set());
-    recentUploads.get(s.owner).add(meta.url);
+    stored(req, board, meta);
     res.json(meta);
   } catch (err) {
     fs.rm(s.path, { force: true }, () => {});
     console.error('Upload failed:', err.message);
     res.status(502).json({ error: files.mode === 'drive' ? 'Could not save to Google Drive — try again' : 'Could not save the file' });
+  }
+});
+
+/** After a file is saved: the uploader can load it straight away, and the board remembers it. */
+function stored(req, board, meta) {
+  const owner = ownerKey(req.user);
+  if (!recentUploads.has(owner)) recentUploads.set(owner, new Set());
+  recentUploads.get(owner).add(meta.url);
+  if (board) store.addAsset(board.id, { ...meta, at: Date.now(), by: req.user.name || req.user.email || 'Someone' });
+}
+
+// Paste/drop from a website, or a pasted image link: fetch the original file (so GIFs stay
+// animated) and store it like an upload. Answers { media: false } for ordinary web pages.
+app.post('/api/import-url', async (req, res) => {
+  const board = req.body?.boardId ? store.get(req.body.boardId) : null;
+  if (!board || !perms.can(req.user, board, 'edit')) return res.status(403).json({ error: 'You can’t add files to this board' });
+  let url;
+  try { url = new URL(String(req.body?.url || '')); } catch { return res.status(400).json({ error: 'That isn’t a link' }); }
+  let got = null;
+  try {
+    got = await importMedia(url.href, TMP_DIR, MAX_UPLOAD);
+  } catch (err) {
+    return res.status(422).json({ error: `Couldn’t fetch that file: ${err.message}` });
+  }
+  if (!got) return res.json({ media: false });
+  const project = board.projectId ? store.projects.get(board.projectId) : null;
+  try {
+    const meta = await files.store(got.path, {
+      original: got.name, mime: got.mime, size: got.size,
+      folderKey: project ? project.id : 'unfiled', folderName: project ? project.name : 'Unfiled',
+    });
+    stored(req, board, meta);
+    res.json({ media: true, ...meta, sourceUrl: got.sourceUrl });
+  } catch (err) {
+    fs.rm(got.path, { force: true }, () => {});
+    console.error('Import failed:', err.message);
+    res.status(502).json({ error: 'Could not save the file' });
   }
 });
 

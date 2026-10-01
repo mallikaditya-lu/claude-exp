@@ -9,7 +9,7 @@ function Uploading({ id, name }: { id: string; name?: string }) {
   return (
     <div className="uploading">
       <div className="spinner" />
-      <div className="uploading-name">{p === undefined ? 'Waiting for upload…' : `Uploading ${name || 'file'}`}</div>
+      <div className="uploading-name">{p === undefined ? (name?.startsWith('Importing') ? `${name}…` : 'Waiting for upload…') : `Uploading ${name || 'file'}`}</div>
       {p !== undefined && <div className="uploading-bar"><div style={{ width: `${Math.round(p * 100)}%` }} /></div>}
     </div>
   );
@@ -51,6 +51,14 @@ export function ImageCard({ item, editing, update, setEditing }: CardProps) {
 
 export function VideoCard({ item }: CardProps) {
   if (item.uploading || !item.url) return <Uploading id={item.id} name={item.fileName} />;
+  // GIF-style video: plays silently on a loop, like the GIF it came from.
+  if (item.loop) {
+    return (
+      <div className="image-card">
+        <video src={item.url} autoPlay muted loop playsInline preload="auto" />
+      </div>
+    );
+  }
   return (
     <div className="video-card">
       <video src={item.url} controls preload="metadata" playsInline />
