@@ -8,7 +8,7 @@ export type Tool =
 
 export const TOOL_MIME = 'application/x-rb-tool';
 
-const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
+export const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { id: 'note', label: 'Note', icon: <IconNote />, hint: 'Rich text note (N)' },
   { id: 'heading', label: 'Heading', icon: <IconHeading />, hint: 'Coloured section label (H)' },
   { id: 'link', label: 'Link', icon: <IconLink />, hint: 'Web link or embed: YouTube, Spotify, Figma… (L)' },

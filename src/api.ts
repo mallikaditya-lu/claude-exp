@@ -1,4 +1,5 @@
-import type { Board, BoardSharing, BoardSummary, GlobalRole, LinkMode, MemberRole, Patch, Project, Thread } from './types';
+import type { Board, BoardSharing, BoardSummary, Connection, GlobalRole, Item, LinkMode, MemberRole, Patch, Project, Thread } from './types';
+import type { TemplateSummary } from './components/QuickAdd';
 
 export const clientId = crypto.randomUUID();
 
@@ -130,6 +131,11 @@ export const api = {
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
+  templates: () => req<TemplateSummary[]>('/api/templates'),
+  template: (id: string) => req<{ id: string; name: string; items: Item[]; connections: Connection[] }>(`/api/templates/${id}`),
+  saveTemplate: (name: string, items: Item[], connections: Connection[], category = '') =>
+    req<{ id: string; name: string; category: string }>('/api/templates', { method: 'POST', body: JSON.stringify({ name, category, items, connections }) }),
+  deleteTemplate: (id: string) => req<{ ok: boolean }>(`/api/templates/${id}`, { method: 'DELETE' }),
   importUrl: (url: string, boardId: string) =>
     req<{ media: false } | ({ media: true; sourceUrl: string } & UploadResult)>('/api/import-url', { method: 'POST', body: JSON.stringify({ url, boardId }) }),
   unfurl: (url: string) => req<LinkMeta>(`/api/unfurl?url=${encodeURIComponent(url)}`),

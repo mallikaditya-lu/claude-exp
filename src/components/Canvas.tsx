@@ -8,9 +8,10 @@ import { CanvasContext, type CanvasCtx } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
+import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
-  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment,
+  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment, IconTemplate,
 } from './icons';
 
 interface Props {
@@ -110,6 +111,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const dropRef = useRef(dropTarget);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [linking, setLinking] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
+  // The add menu on the canvas: screen position, board point, and the card a new line starts from.
+  const [quickAdd, setQuickAdd] = useState<{ left: number; top: number; at: { x: number; y: number }; from?: { id: string; side: Side } } | null>(null);
+  const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
+  // A line waiting for the card that a file picker / upload will create.
+  const pendingConnect = useRef<{ id: string; side: Side } | null>(null);
+  const isTeamHere = access === 'manage';
   // Dragging one end of a selected line to re-attach it.
   const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -309,9 +317,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const pos = at ?? freeSpot(viewportCenter(), 170);
     try {
       const nb = await api.createBoard('Untitled board', board.id);
-      addItem('board', pos, { boardId: nb.id });
+      return addItem('board', pos, { boardId: nb.id });
     } catch (err) {
       notify((err as Error).message);
+      return '';
     }
   }, [addItem, board.id, freeSpot, notify, viewportCenter]);
 
@@ -328,6 +337,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         uploading: true, fileName: file.name, size: file.size, mime: file.type,
       });
       x += w + 24;
+      if (i === 0 && pendingConnect.current) {
+        const from = pendingConnect.current;
+        pendingConnect.current = null;
+        setTimeout(() => addConnection(from.id, id, from.side), 0);
+      }
       setUploads((u) => ({ ...u, [id]: 0 }));
       api.upload(file, (p) => setUploads((u) => ({ ...u, [id]: p })), board.id)
         .then((r) => updateItem(id, { uploading: false, url: r.url, size: r.size, mime: r.mime, fileName: r.name }))
@@ -337,7 +351,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         })
         .finally(() => setUploads((u) => { const n = { ...u }; delete n[id]; return n; }));
     });
-  }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
+  }, [addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Bring in an image/GIF/video from the web by its original address, so GIFs stay animated.
@@ -346,9 +360,9 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const importFromWeb = useCallback((url: string, at?: { x: number; y: number }, fallback?: File) => {
     // Our own files (copied from another board) need no import.
     if (url.startsWith(`${location.origin}/uploads/`)) {
-      addItem('image', at, { url: url.slice(location.origin.length) });
+      const own = addItem('image', at, { url: url.slice(location.origin.length) });
       setEditingId(null);
-      return;
+      return own;
     }
     const pos = at ?? freeSpot(viewportCenter(), 360, 260);
     const looksVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
@@ -375,6 +389,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         else if (/\.(gif|webp|png|jpe?g|avif)(\?|$)/i.test(url)) { addItem('image', pos, { url, source: url }); notify('Couldn’t save a copy, so this image loads from the original site'); }
         else { addItem('link', pos, { url }); notify(err.message); }
       });
+    return id;
   }, [addFiles, addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
 
   const pickFiles = (accept: string, at?: { x: number; y: number }) => {
@@ -508,7 +523,9 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       items: { ...bb.items, ...Object.fromEntries(clones.map((c) => [c.id, c])) },
       connections: { ...bb.connections, ...Object.fromEntries(conns.map((c) => [c.id, c])) },
     }));
-    setSelection(new Set(clones.filter((c) => !c.parentId).map((c) => c.id)));
+    const top = clones.filter((c) => !c.parentId).map((c) => c.id);
+    setSelection(new Set(top));
+    return top;
   }, [change, getBoard, me]);
 
   const collectSelection = useCallback(() => {
@@ -525,6 +542,87 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const conns = Object.values(b.connections).filter((c) => ids.has(c.from) && ids.has(c.to));
     return { items: list, connections: conns };
   }, [getBoard]);
+
+  // ---------- quick-add menu ----------
+  const openQuickAdd = useCallback((clientX: number, clientY: number, from?: { id: string; side: Side }) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const r = root.getBoundingClientRect();
+    const at = toWorld(clientX, clientY);
+    setQuickAdd({
+      left: clamp(clientX - r.left + 8, 8, r.width - 280),
+      top: clamp(clientY - r.top + 8, 8, r.height - 400),
+      at,
+      from,
+    });
+    if (isTeamHere) api.templates().then(setTemplates).catch(() => setTemplates([]));
+  }, [isTeamHere, toWorld]);
+
+  const closeQuickAdd = useCallback(() => {
+    setQuickAdd(null);
+    setLinking(null);
+  }, []);
+
+  /** Insert a saved template with its top-left corner at a board point. Returns the new top-level card ids. */
+  const insertTemplate = useCallback(async (id: string, at: { x: number; y: number }) => {
+    try {
+      const t = await api.template(id);
+      return insertClones(t.items, t.connections, { x: Math.round(at.x), y: Math.round(at.y) }) || [];
+    } catch (err) {
+      notify((err as Error).message);
+      return [];
+    }
+  }, [insertClones, notify]);
+
+  const pickQuick = useCallback(async (pick: QuickPick) => {
+    const q = quickAdd;
+    setQuickAdd(null);
+    setLinking(null);
+    if (!q) return;
+    const { from } = q;
+    // A card made from a line sits beside the point it was dropped at, facing the line.
+    const at = { ...q.at };
+    if (from?.side === 'right') at.x += 140;
+    if (from?.side === 'left') at.x -= 140;
+    if (from?.side === 'bottom') at.y += 30;
+    if (from?.side === 'top') at.y -= 120;
+    let id = '';
+    if (pick.kind === 'tool') {
+      const tool = pick.tool;
+      if (tool === 'comment' || tool === 'line') { applyTool(tool, q.at); return; }
+      if (tool === 'image' || tool === 'upload') {
+        pendingConnect.current = from || null;
+        pickFiles(tool === 'image' ? 'image/*' : '', at);
+        return;
+      }
+      if (tool === 'board') id = (await addBoard(at)) || '';
+      else id = addItem(tool, at);
+    } else if (pick.kind === 'link') {
+      id = isMediaUrl(pick.url) ? importFromWeb(pick.url, at) || '' : addItem('link', at, { url: pick.url });
+      setEditingId(null);
+    } else if (pick.kind === 'note') {
+      id = addItem('note', at, { text: textToHtml(pick.text) });
+      setEditingId(null);
+    } else if (pick.kind === 'template') {
+      const ids = await insertTemplate(pick.id, from ? at : q.at);
+      id = ids[0] || '';
+    }
+    if (from && id) addConnection(from.id, id, from.side);
+  }, [addBoard, addConnection, addItem, applyTool, importFromWeb, insertTemplate, quickAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Save the selection as a template (team only). */
+  const saveTemplate = useCallback(async () => {
+    const data = collectSelection();
+    if (!data?.items.length) return;
+    const name = window.prompt('Template name', data.items.length === 1 ? (data.items[0].title || '') : '')?.trim();
+    if (name === undefined) return;
+    try {
+      const t = await api.saveTemplate(name, data.items, data.connections);
+      notify(`Saved “${t.name}” in ${t.category}. Press ⇧A on any board to use it.`);
+    } catch (err) {
+      notify((err as Error).message);
+    }
+  }, [notify]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** ⌘G: put the selected cards into a new group, keeping their reading order. */
   const groupSelection = useCallback(() => {
@@ -766,10 +864,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      setLinking(null);
       setDragging(false);
       const hit = cardAt(ev.clientX, ev.clientY);
-      if (hit) addConnection(item.id, hit.id, side, hit.side);
+      if (hit) { setLinking(null); addConnection(item.id, hit.id, side, hit.side); return; }
+      // Dropped on empty board: offer to add a card there, connected to this one.
+      const moved = Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > 24;
+      if (!moved || !canEdit) { setLinking(null); return; }
+      openQuickAdd(ev.clientX, ev.clientY, { id: item.id, side });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1014,6 +1115,14 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       if (!canEdit) return;
       if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); return; }
       if (mod && key === 'd') { e.preventDefault(); duplicate(); return; }
+      if (e.shiftKey && !mod && key === 'a') {
+        e.preventDefault();
+        const r = rootRef.current!.getBoundingClientRect();
+        const p = lastPointer.current;
+        const inside = p && p.x > r.left && p.x < r.right && p.y > r.top && p.y < r.bottom;
+        openQuickAdd(inside ? p.x : r.left + r.width / 2, inside ? p.y : r.top + r.height / 2);
+        return;
+      }
       if (mod && key === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
       if (mod && key === 'a') {
         e.preventDefault();
@@ -1054,6 +1163,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   // ---------- live cursors ----------
   const lastCursor = useRef(0);
   const onPointerMove = (e: React.PointerEvent) => {
+    lastPointer.current = { x: e.clientX, y: e.clientY };
     const now = performance.now();
     if (now - lastCursor.current < 60) return;
     lastCursor.current = now;
@@ -1409,6 +1519,9 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 {single?.url && (
                   <a className="icon-btn" title="Open in new tab" href={single.url} target="_blank" rel="noopener noreferrer"><IconExternal size={16} /></a>
                 )}
+                {isTeamHere && (
+                  <button className="icon-btn" title="Save as template" onClick={saveTemplate}><IconTemplate size={16} /></button>
+                )}
                 <button className="icon-btn" title="Bring to front" onClick={bringToFront}><IconFront size={16} /></button>
                 <button className="icon-btn" title="Duplicate (⌘D)" onClick={duplicate}><IconCopy size={16} /></button>
                 <button className="icon-btn danger" title="Delete (⌫)" onClick={deleteSelection}><IconTrash size={16} /></button>
@@ -1431,6 +1544,21 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
               onDelete={deleteSelection}
             />
           </div>
+        )}
+
+        {quickAdd && (
+          <QuickAdd
+            left={quickAdd.left}
+            top={quickAdd.top}
+            tools={(['note', 'heading', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
+            templates={isTeamHere ? templates : null}
+            onPick={pickQuick}
+            onDeleteTemplate={isTeamHere ? (t) => {
+              if (!window.confirm(`Delete the template “${t.name}”? Boards that used it keep their cards.`)) return;
+              api.deleteTemplate(t.id).then(() => setTemplates((l) => (l || []).filter((x) => x.id !== t.id))).catch((err) => notify(err.message));
+            } : undefined}
+            onClose={closeQuickAdd}
+          />
         )}
 
         {comments && (

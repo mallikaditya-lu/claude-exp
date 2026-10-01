@@ -16,6 +16,7 @@ import { Users, ROLES, ADMIN_EMAILS, TEAM_DOMAINS } from './users.js';
 import { Permissions, MEMBER_ROLES, atLeast, isOwnComment } from './permissions.js';
 import { Visitors } from './visitors.js';
 import { importMedia } from './importer.js';
+import { Templates } from './templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -44,6 +45,7 @@ const store = new Store(DATA_DIR);
 const users = new Users(DATA_DIR);
 const perms = new Permissions(store, users);
 const visitors = new Visitors(DATA_DIR);
+const templates = new Templates(DATA_DIR);
 
 // Google Drive storage is used when both variables are set; otherwise files stay on local disk.
 let drive = null;
@@ -500,6 +502,29 @@ app.post('/api/boards/:id/patch', (req, res) => {
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
   scheduleIndexBroadcast();
   res.json({ version: result.board.version });
+});
+
+// ---------- templates (team only: they can hold content from any project) ----------
+app.get('/api/templates', needTeam, (_req, res) => res.json(templates.summaries()));
+
+app.get('/api/templates/:id', needTeam, (req, res) => {
+  const t = templates.get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found' });
+  res.json(t);
+});
+
+app.post('/api/templates', needTeam, (req, res) => {
+  try {
+    const t = templates.create(req.body || {}, req.user.name || req.user.email || 'team');
+    res.status(201).json({ id: t.id, name: t.name, category: t.category });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/templates/:id', needTeam, (req, res) => {
+  if (!templates.remove(req.params.id)) return res.status(404).json({ error: 'Template not found' });
+  res.json({ ok: true });
 });
 
 // ---------- comments (Figma-style pinned threads) ----------
