@@ -96,6 +96,9 @@ export interface Connection {
   arrow?: 'none' | 'end' | 'both';
 }
 
+/** A note in the board's Notes panel (editors' scratchpad, not on the canvas). */
+export interface BoardNote { id: string; text: string; color?: string; author: string; authorEmail?: string | null; createdAt: number; updatedAt: number; editedBy?: string }
+
 export interface Board {
   id: string;
   title: string;
@@ -108,6 +111,8 @@ export interface Board {
   items: Record<string, Item>;
   connections: Record<string, Connection>;
   threads?: Record<string, Thread>;
+  /** Only sent to people who can edit the board. */
+  notes?: Record<string, BoardNote>;
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -170,6 +175,8 @@ export interface Patch {
   /** Comment threads only ever arrive from the server (they're saved through their own API). */
   upsertThreads?: Thread[];
   removeThreads?: string[];
+  upsertNotes?: BoardNote[];
+  removeNotes?: string[];
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }

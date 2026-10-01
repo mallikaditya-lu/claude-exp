@@ -399,8 +399,10 @@ function Composer({ me, placeholder, autoFocus, onSend, onCancel }: {
 // Right-hand panel: every thread on the board, open or resolved.
 // ---------------------------------------------------------------------------------------------
 
-export function CommentsPanel({ board, access, ui, setUi, me, actions, hint }: CommentsProps & {
+export function CommentsPanel({ board, access, ui, setUi, me, actions, hint, title }: CommentsProps & {
   board: Board | null; access: Access; hint?: React.ReactNode;
+  /** Replaces the "Comments" heading (e.g. Comments | Notes tabs). */
+  title?: React.ReactNode;
 }) {
   const all = sortedThreads(board);
   const mine = (t: Thread) => t.comments.some((c) => isOwn(c, me));
@@ -415,7 +417,7 @@ export function CommentsPanel({ board, access, ui, setUi, me, actions, hint }: C
   return (
     <aside className="comments-panel">
       <div className="comments-head">
-        <b>Comments</b>
+        {title || <b>Comments</b>}
         <div className="grow" />
         {canComment && (
           <button className={`btn small ${ui.mode ? 'is-on' : ''}`} title="Add a comment (M)" onClick={() => setUi((u) => ({ ...u, mode: !u.mode, draft: null }))}>

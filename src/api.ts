@@ -1,4 +1,4 @@
-import type { Board, BoardSharing, BoardSummary, Connection, GlobalRole, Item, LinkMode, MemberRole, Patch, Project, Thread } from './types';
+import type { Board, BoardNote, BoardSharing, BoardSummary, Connection, GlobalRole, Item, LinkMode, MemberRole, Patch, Project, Thread } from './types';
 import type { TemplateSummary } from './components/QuickAdd';
 
 export const clientId = crypto.randomUUID();
@@ -73,6 +73,7 @@ export interface AdminData {
 }
 
 export interface UploadResult { url: string; name: string; size: number; mime: string }
+export interface Asset { url: string; name: string; mime: string; size: number; at: number; by: string | null; onBoard: boolean; boardId: string; boardTitle: string }
 export interface LinkMeta { url: string; title: string; description: string; image: string; siteName: string }
 
 export const api = {
@@ -131,6 +132,13 @@ export const api = {
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
+  assets: (boardId: string, scope: 'board' | 'project') => req<Asset[]>(`/api/boards/${boardId}/assets?scope=${scope}`),
+  notes: {
+    add: (boardId: string, text = '') => req<BoardNote>(`/api/boards/${boardId}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),
+    edit: (boardId: string, id: string, fields: { text?: string; color?: string }) =>
+      req<BoardNote>(`/api/boards/${boardId}/notes/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
+    remove: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/notes/${id}`, { method: 'DELETE' }),
+  },
   templates: () => req<TemplateSummary[]>('/api/templates'),
   template: (id: string) => req<{ id: string; name: string; items: Item[]; connections: Connection[] }>(`/api/templates/${id}`),
   saveTemplate: (name: string, items: Item[], connections: Connection[], category = '') =>

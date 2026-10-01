@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import {
-  IconBoard, IconColumn, IconComment, IconHeading, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
+  IconBoard, IconColumn, IconComment, IconFolder, IconHeading, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
 } from './icons';
 
 export type Tool =
@@ -22,7 +22,9 @@ export const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[]
   { id: 'upload', label: 'Upload', icon: <IconUpload />, hint: 'Upload video, audio, PDFs or any file' },
 ];
 
-export function Toolbar({ onTool, lineMode, commentMode }: { onTool: (t: Tool) => void; lineMode: boolean; commentMode: boolean }) {
+export function Toolbar({ onTool, lineMode, commentMode, assetsOpen, onAssets }: {
+  onTool: (t: Tool) => void; lineMode: boolean; commentMode: boolean; assetsOpen: boolean; onAssets: () => void;
+}) {
   return (
     <nav className="toolbar" onPointerDown={(e) => e.stopPropagation()}>
       {TOOLS.map((t) => (
@@ -41,6 +43,11 @@ export function Toolbar({ onTool, lineMode, commentMode }: { onTool: (t: Tool) =
           <span className="tool-label">{t.label}</span>
         </button>
       ))}
+      <div className="tool-sep" />
+      <button className={`tool ${assetsOpen ? 'is-active' : ''}`} title="Assets: every file added to this board" onClick={onAssets}>
+        <span className="tool-icon"><IconFolder /></span>
+        <span className="tool-label">Assets</span>
+      </button>
     </nav>
   );
 }

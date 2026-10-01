@@ -245,8 +245,15 @@ export function applyPatch(board: Board, patch: Patch): Board {
     for (const t of patch.upsertThreads || []) threads[t.id] = t;
     for (const id of patch.removeThreads || []) delete threads[id];
   }
+  let notes = board.notes;
+  if (patch.upsertNotes?.length || patch.removeNotes?.length) {
+    notes = { ...(board.notes || {}) };
+    for (const n of patch.upsertNotes || []) notes[n.id] = n;
+    for (const id of patch.removeNotes || []) delete notes[id];
+  }
   return {
     ...board,
+    notes,
     title: patch.title ?? board.title,
     background: patch.background !== undefined ? patch.background : board.background,
     projectId: patch.projectId !== undefined ? patch.projectId : board.projectId,

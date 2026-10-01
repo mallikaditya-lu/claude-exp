@@ -145,6 +145,24 @@ export class Store {
     this.persist(boardId);
   }
 
+  // ---------- board notes (editors' scratchpad, shown beside the canvas) ----------
+  saveNote(boardId, note) {
+    const board = this.boards.get(boardId);
+    if (!board) return null;
+    board.notes ||= {};
+    board.notes[note.id] = note;
+    this.persist(boardId);
+    return board;
+  }
+
+  removeNote(boardId, noteId) {
+    const board = this.boards.get(boardId);
+    if (!board?.notes?.[noteId]) return null;
+    delete board.notes[noteId];
+    this.persist(boardId);
+    return board;
+  }
+
   // ---------- comment threads (pinned on the canvas, saved separately from cards) ----------
   // board.threads: { [id]: { id, x, y, itemId?, dx?, dy?, createdAt, resolved: { by, at } | null, comments: [...] } }
   saveThread(boardId, thread) {

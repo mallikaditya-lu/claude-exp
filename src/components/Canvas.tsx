@@ -9,6 +9,9 @@ import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
 import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
+import { ASSET_MIME, AssetsPanel, assetKind } from './AssetsPanel';
+import { NOTE_MIME } from './NotesPanel';
+import type { Asset } from '../api';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
   IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment, IconTemplate,
@@ -118,6 +121,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   // A line waiting for the card that a file picker / upload will create.
   const pendingConnect = useRef<{ id: string; side: Side } | null>(null);
   const isTeamHere = access === 'manage';
+  const [assetsOpen, setAssetsOpen] = useState(false);
   // Dragging one end of a selected line to re-attach it.
   const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -391,6 +395,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       });
     return id;
   }, [addFiles, addItem, board.id, change, freeSpot, notify, updateItem, viewportCenter]);
+
+  /** Put a file from the Assets panel back on the board. */
+  const addAsset = useCallback((a: Asset, at?: { x: number; y: number }) => {
+    const kind = assetKind(a);
+    addItem(kind, at, { url: a.url, fileName: a.name, size: a.size, mime: a.mime });
+    setEditingId(null);
+  }, [addItem]);
 
   const pickFiles = (accept: string, at?: { x: number; y: number }) => {
     pendingFilePos.current = at ?? null;
@@ -1035,6 +1046,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const p = toWorld(e.clientX, e.clientY);
     const tool = e.dataTransfer.getData(TOOL_MIME) as Tool;
     if (tool) { applyTool(tool, p); return; }
+    const note = e.dataTransfer.getData(NOTE_MIME);
+    if (note) { addItem('note', p, { text: textToHtml(note) }); setEditingId(null); return; }
+    const asset = e.dataTransfer.getData(ASSET_MIME);
+    if (asset) { try { addAsset(JSON.parse(asset), p); } catch { /* not ours */ } return; }
     const files = [...e.dataTransfer.files];
     // Dragged from a website: use the original image (keeps GIFs animated).
     const webImage = imageFromHtml(e.dataTransfer.getData('text/html'));
@@ -1591,7 +1606,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         </div>
       </div>
 
-      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} />}
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} />}
+      {canEdit && assetsOpen && (
+        <AssetsPanel boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
+      )}
       {!canEdit && canComment && comments && (
         <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
           <button className={`tool ${commentMode ? 'is-active' : ''}`} title="Comment (M)" onClick={toggleCommentMode}>

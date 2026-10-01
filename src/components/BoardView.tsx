@@ -5,8 +5,9 @@ import type { BoardSummary, Project } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
+import { NotesPanel } from './NotesPanel';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconComment, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
+import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
 
 interface Props {
   boardId: string;
@@ -51,6 +52,35 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
   const access = board?.access || 'manage';
   const canEdit = access === 'manage' || access === 'edit';
   const openCount = Object.values(board?.threads || {}).filter((t) => !t.resolved).length;
+  const noteCount = Object.keys(board?.notes || {}).length;
+  // One column on the right: Comments or Notes (notes are for editors only).
+  const [tab, setTabState] = useState<'comments' | 'notes'>(() => {
+    try { return localStorage.getItem('rb-side-tab') === 'notes' ? 'notes' : 'comments'; } catch { return 'comments'; }
+  });
+  const setTab = (t: 'comments' | 'notes') => {
+    setTabState(t);
+    try { localStorage.setItem('rb-side-tab', t); } catch { /* storage unavailable */ }
+  };
+  const side = canEdit ? tab : 'comments';
+  const toggleSide = (t: 'comments' | 'notes') => {
+    if (comments.panel && side === t) { setComments((u) => ({ ...u, panel: false })); return; }
+    setTab(t);
+    setComments((u) => ({ ...u, panel: true }));
+  };
+  // Commenting (M, or a pin) brings the comments column forward.
+  useEffect(() => {
+    if (comments.mode || comments.openId) setTabState('comments');
+  }, [comments.mode, comments.openId]);
+  const tabs = canEdit ? (
+    <div className="panel-tabs">
+      <button className={side === 'comments' ? 'is-on' : ''} onClick={() => setTab('comments')}>
+        Comments{openCount ? <span className="badge-inline">{openCount}</span> : null}
+      </button>
+      <button className={side === 'notes' ? 'is-on' : ''} onClick={() => setTab('notes')}>
+        Notes{noteCount ? <span className="badge-inline">{noteCount}</span> : null}
+      </button>
+    </div>
+  ) : undefined;
 
   if (status === 'missing') {
     return (
@@ -116,13 +146,23 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
           />
         )}
         <button
-          className={`icon-btn comments-toggle ${comments.panel ? 'is-on' : ''}`}
+          className={`icon-btn comments-toggle ${comments.panel && side === 'comments' ? 'is-on' : ''}`}
           title="Comments"
-          onClick={() => setComments((u) => ({ ...u, panel: !u.panel }))}
+          onClick={() => toggleSide('comments')}
         >
           <IconComment size={17} />
           {openCount > 0 && <span className="badge">{openCount}</span>}
         </button>
+        {canEdit && (
+          <button
+            className={`icon-btn comments-toggle ${comments.panel && side === 'notes' ? 'is-on' : ''}`}
+            title="Notes: this board's scratchpad (editors only)"
+            onClick={() => toggleSide('notes')}
+          >
+            <IconNote size={17} />
+            {noteCount > 0 && <span className="badge is-quiet">{noteCount}</span>}
+          </button>
+        )}
         {canEdit && <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>}
         {canEdit && <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>}
         <button
@@ -163,7 +203,10 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
           <div className="splash"><div className="spinner" /></div>
         )}
       </div>
-      {comments.panel && <CommentsPanel board={board} access={access} ui={comments} setUi={setComments} me={identity} actions={actions} />}
+      {comments.panel && side === 'comments' && <CommentsPanel board={board} access={access} ui={comments} setUi={setComments} me={identity} actions={actions} title={tabs} />}
+      {comments.panel && side === 'notes' && board && (
+        <NotesPanel board={board} applyServerPatch={applyServerPatch} notify={notify} title={tabs} onClose={() => setComments((u) => ({ ...u, panel: false }))} />
+      )}
       </div>
     </div>
   );

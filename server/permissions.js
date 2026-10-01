@@ -122,6 +122,8 @@ export class Permissions {
         // Images and videos inside table cells.
         if (it.table && JSON.stringify(it.table).includes(url)) return true;
       }
+      // Files once added to the board (the Assets panel keeps them after their card is deleted).
+      if (b.assets?.some((a) => a.url === url)) return true;
     }
     return false;
   }
