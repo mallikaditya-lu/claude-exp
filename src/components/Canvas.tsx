@@ -6,7 +6,7 @@ import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Sid
 import { ConnectorToolbar } from './ConnectorToolbar';
 import { CanvasContext, type CanvasCtx, type PlayMedia } from './CanvasContext';
 import { ItemBody } from './items';
-import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
+import { DockPositionMenu, TOOL_MIME, Toolbar, useDockPosition, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
 import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
 import { ASSET_MIME, AssetsPanel, askName, assetKind } from './AssetsPanel';
@@ -132,6 +132,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const pendingConnect = useRef<{ id: string; side: Side } | null>(null);
   const isTeamHere = access === 'manage';
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const [dock, setDock] = useDockPosition();
   // Dragging one end of a selected line to re-attach it.
   const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -1360,7 +1361,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     <CanvasContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${commentMode ? 'is-comment-mode' : ''} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
+        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${commentMode ? 'is-comment-mode' : ''} dock-${dock} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px` }}
         onPointerDown={onBgPointerDown}
         onPointerMove={onPointerMove}
@@ -1456,7 +1457,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         {!free.length && (
           <div className="empty-hint">
             <b>This board is empty</b>
-            <span>{canEdit ? 'Drag cards from the toolbar, double-click to add a note, paste a link, or drop files here.' : 'Nothing has been added here yet.'}</span>
+            <span>{canEdit ? 'Drag cards from the toolbar, double-click to add text, press ⇧A, paste a link, or drop files here.' : 'Nothing has been added here yet.'}</span>
           </div>
         )}
 
@@ -1682,16 +1683,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         </div>
       </div>
 
-      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} />}
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} position={dock} onPosition={setDock} />}
       {canEdit && assetsOpen && (
-        <AssetsPanel boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
+        <AssetsPanel dock={dock} boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
       )}
       {!canEdit && canComment && comments && (
-        <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
+        <nav className={`toolbar is-compact dock dock-${dock}`} onPointerDown={(e) => e.stopPropagation()}>
           <button className={`tool ${commentMode ? 'is-active' : ''}`} title="Comment (M)" onClick={toggleCommentMode}>
             <span className="tool-icon"><IconComment /></span>
             <span className="tool-label">Comment</span>
           </button>
+          <DockPositionMenu pos={dock} onChange={setDock} />
         </nav>
       )}
 

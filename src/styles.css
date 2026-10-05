@@ -692,7 +692,6 @@ input, textarea { user-select: text; }
 }
 .canvas.is-readonly .card :is(input, textarea, select) { pointer-events: none; }
 .canvas.is-readonly :is(.todo-add, .table-add, .table-tools) { display: none; }
-.toolbar.is-compact { bottom: auto; }
 
 /* ---------- modal + share dialog ---------- */
 .modal-backdrop {
@@ -1074,3 +1073,55 @@ body.is-resizing iframe { pointer-events: none; }
 .asset-name-row .asset-name { flex: 1; min-width: 0; margin-top: 0; }
 .asset-rename { width: 22px; height: 22px; opacity: 0; flex: none; }
 .asset:hover .asset-rename { opacity: 1; }
+
+/* ---------- dock toolbar (bottom by default; left, right or top per person) ---------- */
+.toolbar.dock {
+  width: auto; height: auto; overflow: visible; gap: 4px; padding: 6px 8px; border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+}
+.toolbar.dock-bottom { left: 50%; right: auto; top: auto; bottom: 14px; transform: translateX(-50%); flex-direction: row; align-items: flex-end; }
+.toolbar.dock-top { left: 50%; right: auto; top: 12px; bottom: auto; transform: translateX(-50%); flex-direction: row; align-items: flex-start; }
+.toolbar.dock-left { left: 12px; right: auto; top: 50%; bottom: auto; transform: translateY(-50%); flex-direction: column; align-items: flex-start; }
+.toolbar.dock-right { right: 12px; left: auto; top: 50%; bottom: auto; transform: translateY(-50%); flex-direction: column; align-items: flex-end; }
+.dock .tool { position: relative; padding: 0; gap: 0; background: none !important; --mag: 1; }
+.dock .tool-icon {
+  width: calc(40px * var(--mag)); height: calc(40px * var(--mag)); border-radius: calc(10px * var(--mag));
+  transition: width 0.14s ease-out, height 0.14s ease-out, border-radius 0.14s ease-out, background 0.12s;
+}
+.dock .tool-icon svg { width: calc(18px * var(--mag)); height: calc(18px * var(--mag)); transition: width 0.14s ease-out, height 0.14s ease-out; }
+.dock .tool:hover .tool-icon { background: var(--hover); }
+.dock .tool.is-active .tool-icon { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* Labels appear as tooltips beside the dock, as on a Mac. */
+.dock .tool-label {
+  position: absolute; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.1s;
+  background: var(--text); color: var(--panel); font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; z-index: 2;
+}
+.dock .tool:hover .tool-label { opacity: 1; }
+.dock-bottom .tool-label { bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); }
+.dock-top .tool-label { top: calc(100% + 10px); left: 50%; transform: translateX(-50%); }
+.dock-left .tool-label { left: calc(100% + 10px); top: 50%; transform: translateY(-50%); }
+.dock-right .tool-label { right: calc(100% + 10px); top: 50%; transform: translateY(-50%); }
+.dock .tool-sep { flex: none; background: var(--border); }
+.dock-bottom .tool-sep, .dock-top .tool-sep { width: 1px; height: 30px; margin: 0 3px; align-self: center; }
+.dock-left .tool-sep, .dock-right .tool-sep { height: 1px; width: 30px; margin: 3px 0; align-self: center; }
+.dock-pos { position: relative; align-self: center; }
+.dock-pos-btn { width: 22px; height: 28px; border-radius: 6px; color: var(--faint); display: grid; place-items: center; }
+.dock-left .dock-pos-btn, .dock-right .dock-pos-btn { width: 28px; height: 22px; }
+.dock-pos-btn:hover { background: var(--hover); color: var(--text); }
+.dock-pos-menu { min-width: 160px; }
+.dock-bottom .dock-pos-menu { top: auto; bottom: calc(100% + 10px); right: -8px; }
+.dock-top .dock-pos-menu { top: calc(100% + 10px); right: -8px; }
+.dock-left .dock-pos-menu { left: calc(100% + 10px); right: auto; top: auto; bottom: -8px; }
+.dock-right .dock-pos-menu { right: calc(100% + 10px); top: auto; bottom: -8px; }
+/* Things that shared the old left toolbar's space. */
+.assets-panel.dock-bottom { left: 12px; bottom: 84px; }
+.assets-panel.dock-top { left: 12px; top: 74px; }
+.assets-panel.dock-left { left: 76px; }
+.assets-panel.dock-right { left: 12px; }
+.canvas.dock-top .mode-banner { top: 76px; }
+.board-stage:has(.toolbar.dock-bottom) .zoom-controls { bottom: 16px; }
+@media (max-width: 720px) {
+  .toolbar.dock { max-width: calc(100% - 24px); overflow-x: auto; }
+  .dock .tool-icon { width: 36px; height: 36px; }
+}

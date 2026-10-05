@@ -26,13 +26,14 @@ export function askName(current: string) {
 }
 
 interface Props {
+  dock: string;
   boardId: string;
   hasProject: boolean;
   onAdd: (a: Asset) => void;
   onClose: () => void;
 }
 
-export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
+export function AssetsPanel({ dock, boardId, hasProject, onAdd, onClose }: Props) {
   const [scope, setScope] = useState<'board' | 'project'>('board');
   const [kind, setKind] = useState<Kind>('all');
   const [q, setQ] = useState('');
@@ -48,7 +49,7 @@ export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
     (kind === 'all' || assetKind(a) === kind) && (!q.trim() || a.name.toLowerCase().includes(q.trim().toLowerCase()))), [list, kind, q]);
 
   return (
-    <aside className="assets-panel" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+    <aside className={`assets-panel dock-${dock}`} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <div className="assets-head">
         <b>Assets</b>
         <div className="grow" />
