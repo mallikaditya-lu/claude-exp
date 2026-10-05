@@ -1,14 +1,16 @@
 // Who may do what. Everything goes through these functions so the rules live in one place.
 //
 // Access levels, from most to least: manage > edit > comment > view.
-//   manage  – team/admin: everything, including sharing and deleting
-//   edit    – project editor: add, move, change and delete cards; upload; create boards in the project
+//   manage  – admins everywhere; core-team editors of a project or board (its creator is one):
+//             everything, including sharing, covers, moving and deleting
+//   edit    – guest editor: add, move, change and delete cards; upload; create boards in the project
 //   comment – commenter: view, start comment threads, reply, resolve; edit/delete their own comments
 //             (editors can also delete anyone's)
 //   view    – project viewer: look only
 //
-// Guests get a level from project invites and from board invites (a board invite covers the
-// boards nested inside it too); the higher one wins.
+// Only admins see every project. Everyone else, core team included, gets a level from project
+// invites and from board invites (a board invite covers the boards nested inside it too); the
+// higher one wins. Creating a project, or a board outside any project, makes you its editor.
 // Link visitors (no sign-in, see visitors.js) get the link's level on the shared board and the
 // boards inside it, and nothing else. Their email is typed in, not verified, so it never grants
 // anything by itself.
@@ -43,27 +45,50 @@ export class Permissions {
     return this.role(user) === 'admin';
   }
 
+  /** Admins see every project and board. So does password/open mode, which has no emails to invite. */
+  seesAll(user) {
+    return this.isAdmin(user) || (this.role(user) === 'team' && !user.email);
+  }
+
+  /** An invite's level. Core-team editors also manage (share, rename, delete); guest editors only edit. */
+  memberLevel(user, m) {
+    if (!m) return null;
+    if (m.role === 'editor' && this.isTeam(user)) return 'manage';
+    return MEMBER_LEVEL[m.role] || null;
+  }
+
   projectLevel(user, projectId) {
-    if (this.isTeam(user)) return 'manage';
+    return this.projectLevelOf(user, projectId ? this.store.projects.get(projectId) : null);
+  }
+
+  /** Same, for a project object (also one in the trash). */
+  projectLevelOf(user, p) {
+    if (this.seesAll(user)) return 'manage';
     if (!user?.email || user.visitor) return null;
-    const p = projectId ? this.store.projects.get(projectId) : null;
-    const m = p?.members?.[user?.email];
-    return m ? MEMBER_LEVEL[m.role] || null : null;
+    return this.memberLevel(user, p?.members?.[user.email]);
   }
 
   /**
    * Boards inherit access from their project and from invites to the board or any board it sits in.
-   * Boards with neither are team-only.
+   * Boards with neither are admin-only.
    */
   boardLevel(user, board) {
     if (!board || !user) return null;
-    if (this.isTeam(user)) return 'manage';
+    if (this.seesAll(user)) return 'manage';
     if (user.visitor) return this.linkLevel(user, board);
     let level = this.projectLevel(user, board.projectId);
-    for (const b of [board, ...this.store.ancestors(board.id)]) {
-      const m = b.members?.[user.email];
-      if (m) level = higher(level, MEMBER_LEVEL[m.role]);
-    }
+    for (const b of [board, ...this.store.ancestors(board.id)]) level = higher(level, this.memberLevel(user, b.members?.[user.email]));
+    return level || null;
+  }
+
+  /** A board in the trash: from its (possibly trashed) project, its own invites and its live parents. */
+  trashedBoardLevel(user, board) {
+    if (this.seesAll(user)) return 'manage';
+    if (!user?.email || user.visitor) return null;
+    let level = this.projectLevelOf(user, this.store.projects.get(board.projectId) || this.store.trashedProjects.get(board.projectId));
+    const parent = board.parentId ? this.store.get(board.parentId) : null;
+    const chain = [board, ...(parent ? [parent, ...this.store.ancestors(parent.id)] : [])];
+    for (const b of chain) level = higher(level, this.memberLevel(user, b.members?.[user.email]));
     return level || null;
   }
 
@@ -91,30 +116,39 @@ export class Permissions {
     return atLeast(this.boardLevel(user, board), needed);
   }
 
+  /** Board summaries this person can see, each with their access level. */
   visibleBoards(user) {
-    if (this.isTeam(user)) return this.store.list();
-    return [...this.store.boards.values()].filter((b) => this.boardLevel(user, b)).map((b) => this.store.summary(b));
+    if (this.seesAll(user)) return this.store.list().map((b) => ({ ...b, access: 'manage' }));
+    const out = [];
+    for (const b of this.store.boards.values()) {
+      const access = this.boardLevel(user, b);
+      if (access) out.push({ ...this.store.summary(b), access });
+    }
+    return out;
   }
 
   /** Projects the person was invited to, plus projects holding boards shared with them (myLevel null). */
   visibleProjects(user) {
     if (user?.visitor) return [];
     const all = this.store.listProjects();
-    const team = this.isTeam(user);
-    const viaBoards = team ? null : new Set(this.visibleBoards(user).map((b) => b.projectId).filter(Boolean));
+    const everything = this.seesAll(user);
+    const viaBoards = everything ? null : new Set(this.visibleBoards(user).map((b) => b.projectId).filter(Boolean));
     return all
-      .filter((p) => team || p.members?.[user?.email] || viaBoards.has(p.id))
+      .filter((p) => everything || p.members?.[user?.email] || viaBoards.has(p.id))
       .map((p) => {
-        const out = { id: p.id, name: p.name, color: p.color, cover: p.cover || null, createdAt: p.createdAt, myLevel: this.projectLevel(user, p.id) };
-        // Only the team sees who else is in a project.
-        if (team) out.members = Object.entries(p.members || {}).map(([email, m]) => ({ email, ...m, name: this.users.get(email)?.name || null, lastSeen: this.users.get(email)?.lastSeen || 0 }));
+        const myLevel = this.projectLevel(user, p.id);
+        const out = { id: p.id, name: p.name, color: p.color, cover: p.cover || null, createdAt: p.createdAt, createdBy: p.createdBy || null, myLevel };
+        // Only the people who manage a project see who else is in it.
+        if (myLevel === 'manage') out.members = Object.entries(p.members || {}).map(([email, m]) => ({ email, ...m, team: this.users.roleOf(email) !== 'guest', name: this.users.get(email)?.name || null, lastSeen: this.users.get(email)?.lastSeen || 0 }));
         return out;
       });
   }
 
-  /** Uploaded files: guests may load a file only if it's used on a board they can see. */
-  canReadFile(user, url) {
-    if (this.isTeam(user)) return true;
+  /** Uploaded files: people may load a file only if it's used on a board they can see. */
+  canReadFile(user, url, templates) {
+    if (this.seesAll(user)) return true;
+    // Images in templates, which the whole core team shares.
+    if (this.isTeam(user) && templates?.usesFile(url)) return true;
     // A project's cover image, for anyone who can see the project.
     if (!user?.visitor && this.visibleProjects(user).some((p) => p.cover === url)) return true;
     for (const b of this.store.boards.values()) {

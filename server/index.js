@@ -441,6 +441,15 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 const isEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const needTeam = (req, res, next) => (perms.isTeam(req.user) ? next() : res.status(403).json({ error: 'Only the core team can do that' }));
 const needAdmin = (req, res, next) => (perms.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Admins only' }));
+// Sharing, renaming and deleting a project: its core-team editors (the creator is one) and admins.
+const needManageProject = (req, res, next) => {
+  const level = perms.projectLevel(req.user, req.params.id);
+  if (!store.projects.has(req.params.id) || !level) return res.status(404).json({ error: 'Project not found' });
+  if (level !== 'manage') return res.status(403).json({ error: 'Only the project’s team editors can do that' });
+  next();
+};
+// Invites go to anyone but admins, who already see everything.
+const inviteError = (email) => (users.roleOf(email) === 'admin' ? 'That person is an admin and already has access to everything' : null);
 
 // ---------- boards ----------
 app.get('/api/boards', (req, res) => {
@@ -450,12 +459,13 @@ app.get('/api/boards', (req, res) => {
 app.post('/api/boards', (req, res) => {
   const parent = req.body?.parentId ? store.get(req.body.parentId) : null;
   const projectId = parent ? parent.projectId : req.body?.projectId || null;
-  // Team can create anywhere; editors can create boards inside their project, or inside a board they can edit.
-  const allowed = perms.isTeam(req.user) || (parent ? perms.can(req.user, parent, 'edit') : atLeast(perms.projectLevel(req.user, projectId), 'edit'));
+  // Editors can create boards inside a board or project they can edit; the core team can also
+  // start boards outside any project (shared with nobody else until they share them).
+  const allowed = parent ? perms.can(req.user, parent, 'edit') : projectId ? atLeast(perms.projectLevel(req.user, projectId), 'edit') : perms.isTeam(req.user);
   if (!allowed) {
     return res.status(403).json({ error: 'You can’t create boards here' });
   }
-  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId });
+  const board = store.create({ title: req.body?.title, parentId: req.body?.parentId || null, projectId, by: req.user.email || null });
   broadcastIndex();
   res.status(201).json(board);
 });
@@ -466,12 +476,12 @@ app.get('/api/projects', (req, res) => {
 });
 
 app.post('/api/projects', needTeam, (req, res) => {
-  const project = store.createProject(req.body || {});
+  const project = store.createProject(req.body || {}, req.user.email || null);
   broadcastIndex();
   res.status(201).json(project);
 });
 
-app.patch('/api/projects/:id', needTeam, (req, res) => {
+app.patch('/api/projects/:id', needManageProject, (req, res) => {
   const project = store.updateProject(req.params.id, req.body || {});
   if (!project) return res.status(404).json({ error: 'Project not found' });
   broadcastIndex();
@@ -479,7 +489,7 @@ app.patch('/api/projects/:id', needTeam, (req, res) => {
 });
 
 // Deleting a project moves it, with all of its boards, to the trash for 30 days.
-app.delete('/api/projects/:id', needTeam, (req, res) => {
+app.delete('/api/projects/:id', needManageProject, (req, res) => {
   const ids = store.trashProject(req.params.id, req.user.name || req.user.email || 'team');
   if (!ids) return res.status(404).json({ error: 'Project not found' });
   for (const id of ids) broadcast(id, { t: 'deleted', boardId: id });
@@ -487,20 +497,20 @@ app.delete('/api/projects/:id', needTeam, (req, res) => {
   res.json({ ok: true, boards: ids.length });
 });
 
-// Invite someone to a project (or change their role there). Team only.
-app.put('/api/projects/:id/members/:email', needTeam, (req, res) => {
+// Invite someone to a project (or change their role there). Its team editors and admins.
+app.put('/api/projects/:id/members/:email', needManageProject, (req, res) => {
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
   const role = req.body?.role;
   if (!isEmail(email)) return res.status(400).json({ error: 'That doesn’t look like an email address' });
   if (!MEMBER_ROLES.includes(role)) return res.status(400).json({ error: 'Role must be editor, commenter or viewer' });
-  if (users.roleOf(email) !== 'guest') return res.status(400).json({ error: 'That person is on the core team and already has access to every project' });
+  if (inviteError(email)) return res.status(400).json({ error: inviteError(email) });
   const p = store.setMember(req.params.id, email, role, req.user.email || 'team');
   if (!p) return res.status(404).json({ error: 'Project not found' });
   accessChanged();
   res.json(perms.visibleProjects(req.user).find((x) => x.id === p.id));
 });
 
-app.delete('/api/projects/:id/members/:email', needTeam, (req, res) => {
+app.delete('/api/projects/:id/members/:email', needManageProject, (req, res) => {
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
   if (!store.removeMember(req.params.id, email)) return res.status(404).json({ error: 'Not a member' });
   accessChanged();
@@ -509,9 +519,9 @@ app.delete('/api/projects/:id/members/:email', needTeam, (req, res) => {
 
 // ---------- sharing one board ----------
 const shareBase = (req) => SHARE_URL || `${req.protocol}://${req.get('host')}`;
-const peopleInfo = (email) => ({ name: users.get(email)?.name || null, lastSeen: users.get(email)?.lastSeen || 0 });
+const peopleInfo = (email) => ({ name: users.get(email)?.name || null, lastSeen: users.get(email)?.lastSeen || 0, team: users.roleOf(email) !== 'guest' });
 
-/** Everything the Share dialog shows for a board. Team only: it includes the secret link. */
+/** Everything the Share dialog shows for a board. Managers only: it includes the secret link. */
 function sharingInfo(req, board) {
   const project = board.projectId ? store.projects.get(board.projectId) : null;
   const members = Object.entries(board.members || {}).map(([email, m]) => ({ email, ...m, ...peopleInfo(email) }));
@@ -538,18 +548,21 @@ function sharingInfo(req, board) {
   };
 }
 
+/** The board, if this person may share it (manage level); otherwise answers the request. */
 const teamBoard = (req, res) => {
   const board = store.get(req.params.id);
-  if (!board) { res.status(404).json({ error: 'Board not found' }); return null; }
+  const level = perms.boardLevel(req.user, board);
+  if (!board || !level) { res.status(404).json({ error: 'Board not found' }); return null; }
+  if (level !== 'manage') { res.status(403).json({ error: 'Only the board’s team editors can share it' }); return null; }
   return board;
 };
 
-app.get('/api/boards/:id/sharing', needTeam, (req, res) => {
+app.get('/api/boards/:id/sharing', (req, res) => {
   const board = teamBoard(req, res);
   if (board) res.json(sharingInfo(req, board));
 });
 
-app.put('/api/boards/:id/share', needTeam, (req, res) => {
+app.put('/api/boards/:id/share', (req, res) => {
   const board = teamBoard(req, res);
   if (!board) return;
   const { mode, requireIdentity } = req.body || {};
@@ -559,7 +572,7 @@ app.put('/api/boards/:id/share', needTeam, (req, res) => {
   res.json(sharingInfo(req, board));
 });
 
-app.post('/api/boards/:id/share/reset', needTeam, (req, res) => {
+app.post('/api/boards/:id/share/reset', (req, res) => {
   const board = teamBoard(req, res);
   if (!board) return;
   store.resetShareToken(board.id);
@@ -567,20 +580,20 @@ app.post('/api/boards/:id/share/reset', needTeam, (req, res) => {
   res.json(sharingInfo(req, board));
 });
 
-app.put('/api/boards/:id/members/:email', needTeam, (req, res) => {
+app.put('/api/boards/:id/members/:email', (req, res) => {
   const board = teamBoard(req, res);
   if (!board) return;
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
   const role = req.body?.role;
   if (!isEmail(email)) return res.status(400).json({ error: 'That doesn’t look like an email address' });
   if (!MEMBER_ROLES.includes(role)) return res.status(400).json({ error: 'Role must be editor, commenter or viewer' });
-  if (users.roleOf(email) !== 'guest') return res.status(400).json({ error: 'That person is on the core team and already has access to every board' });
+  if (inviteError(email)) return res.status(400).json({ error: inviteError(email) });
   store.setBoardMember(board.id, email, role, req.user.email || 'team');
   accessChanged();
   res.json(sharingInfo(req, board));
 });
 
-app.delete('/api/boards/:id/members/:email', needTeam, (req, res) => {
+app.delete('/api/boards/:id/members/:email', (req, res) => {
   const board = teamBoard(req, res);
   if (!board) return;
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
@@ -669,8 +682,8 @@ app.patch('/api/admin/people/:email', needAdmin, (req, res) => {
   try {
     if (!ROLES.includes(req.body?.role)) return res.status(400).json({ error: 'Role must be admin, team or guest' });
     users.setRole(email, req.body.role);
-    // Team members see everything, so project-level entries become redundant.
-    if (req.body.role !== 'guest') store.removeMemberEverywhere(email);
+    // Admins see everything, so their invites become redundant. (The core team keeps theirs.)
+    if (req.body.role === 'admin') store.removeMemberEverywhere(email);
     accessChanged();
     res.json({ ok: true });
   } catch (err) {
@@ -726,9 +739,14 @@ app.post('/api/boards/:id/patch', (req, res) => {
   const patch = req.body || {};
   if (level === 'view') return res.status(403).json({ error: 'You have view-only access to this board' });
   if (level === 'comment') return res.status(403).json({ error: 'You can comment on this board, but not change it' });
-  // Moving boards between projects changes who can see them: team only.
-  if (patch.projectId !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can move boards between projects' });
-  if (patch.cover !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can change board covers' });
+  // Moving boards between projects changes who can see them: the board's managers, into a project they can edit.
+  if (patch.projectId !== undefined) {
+    if (level !== 'manage') return res.status(403).json({ error: 'Only the board’s team editors can move it' });
+    if (patch.projectId && !atLeast(perms.projectLevel(req.user, patch.projectId), 'edit')) return res.status(403).json({ error: 'You can’t move boards into that project' });
+    // Out of every project, it would be admin-only: keep it shared with whoever moved it.
+    if (!patch.projectId && req.user.email && !perms.isAdmin(req.user) && !board.members?.[req.user.email]) store.setBoardMember(board.id, req.user.email, 'editor', req.user.email);
+  }
+  if (patch.cover !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the board’s team editors can change its cover' });
   const result = store.applyPatch(req.params.id, patch);
   const origin = String(req.headers['x-client-id'] || '');
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
@@ -984,17 +1002,20 @@ app.post('/api/boards/:id/duplicate', (req, res) => {
   const board = store.get(req.params.id);
   if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
   const parent = req.body?.parentId ? store.get(req.body.parentId) : null;
-  // Copying into a board needs edit access there; a new top-level board is for the team.
-  const allowed = parent ? perms.can(req.user, parent, 'edit') : perms.isTeam(req.user);
+  // Copying into a board needs edit access there. A top-level copy stays in the same project
+  // (edit access there), or outside any project (core team).
+  const allowed = parent ? perms.can(req.user, parent, 'edit') : board.projectId ? atLeast(perms.projectLevel(req.user, board.projectId), 'edit') : perms.isTeam(req.user);
   if (!allowed) return res.status(403).json({ error: 'You can’t copy boards here' });
-  const copy = store.duplicate(board.id, parent?.id || null);
+  const copy = store.duplicate(board.id, parent?.id || null, req.user.email || null);
   broadcastIndex();
   res.status(201).json(store.summary(copy));
 });
 
-app.delete('/api/boards/:id', needTeam, (req, res) => {
+app.delete('/api/boards/:id', (req, res) => {
   const board = store.get(req.params.id);
-  if (!board) return res.status(404).json({ error: 'Board not found' });
+  const level = perms.boardLevel(req.user, board);
+  if (!board || !level) return res.status(404).json({ error: 'Board not found' });
+  if (level !== 'manage') return res.status(403).json({ error: 'Only the board’s team editors can delete it' });
   // Remove any board cards that point at this board from its parent.
   const parent = board.parentId ? store.get(board.parentId) : null;
   // To the trash (restorable for 30 days), with the boards nested inside it.
@@ -1012,7 +1033,7 @@ app.delete('/api/boards/:id', needTeam, (req, res) => {
 });
 
 // Every image in a project's boards, for picking a cover.
-app.get('/api/projects/:id/images', needTeam, (req, res) => {
+app.get('/api/projects/:id/images', needManageProject, (req, res) => {
   const seen = new Set();
   const out = [];
   for (const b of store.boards.values()) {
@@ -1027,18 +1048,24 @@ app.get('/api/projects/:id/images', needTeam, (req, res) => {
   res.json(out);
 });
 
-// ---------- recycle bin (team only) ----------
+// ---------- recycle bin ----------
+// Everyone sees and restores only what they manage (admins: everything).
 const TRASH_DAYS = 30;
+const canTrashProject = (user, id) => store.trashedProjects.has(id) && perms.projectLevelOf(user, store.trashedProjects.get(id)) === 'manage';
+const canTrashBoard = (user, id) => {
+  const b = store.trash.get(id);
+  return Boolean(b) && b.trashRoot === id && perms.trashedBoardLevel(user, b) === 'manage';
+};
 
-app.get('/api/trash', needTeam, (_req, res) => {
+app.get('/api/trash', needTeam, (req, res) => {
   const all = [...store.trash.values()];
   const count = (root) => all.filter((b) => b.trashRoot === root).length;
   const projectName = (id) => (store.projects.get(id) || store.trashedProjects.get(id))?.name || null;
   const purgeAt = (at) => at + TRASH_DAYS * 24 * 3600 * 1000;
   res.json({
     days: TRASH_DAYS,
-    projects: [...store.trashedProjects.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, deletedAt: p.deletedAt, deletedBy: p.deletedBy || null, purgeAt: purgeAt(p.deletedAt), boards: count(`project:${p.id}`) })),
-    boards: all.filter((b) => b.trashRoot === b.id).map((b) => ({
+    projects: [...store.trashedProjects.values()].filter((p) => canTrashProject(req.user, p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color, deletedAt: p.deletedAt, deletedBy: p.deletedBy || null, purgeAt: purgeAt(p.deletedAt), boards: count(`project:${p.id}`) })),
+    boards: all.filter((b) => b.trashRoot === b.id && canTrashBoard(req.user, b.id)).map((b) => ({
       id: b.id, title: b.title, deletedAt: b.deletedAt, deletedBy: b.deletedBy || null, purgeAt: purgeAt(b.deletedAt),
       boards: count(b.id), projectName: b.projectId ? projectName(b.projectId) : null, cover: store.summary(b).cover,
     })),
@@ -1046,6 +1073,7 @@ app.get('/api/trash', needTeam, (_req, res) => {
 });
 
 app.post('/api/trash/boards/:id/restore', needTeam, (req, res) => {
+  if (!canTrashBoard(req.user, req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
   const back = store.restoreRoot(req.params.id);
   if (!back.length) return res.status(404).json({ error: 'Not in the trash' });
   // Put a card for it back on its parent board.
@@ -1063,6 +1091,7 @@ app.post('/api/trash/boards/:id/restore', needTeam, (req, res) => {
 });
 
 app.post('/api/trash/projects/:id/restore', needTeam, (req, res) => {
+  if (!canTrashProject(req.user, req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
   const back = store.restoreProject(req.params.id);
   if (!back) return res.status(404).json({ error: 'Not in the trash' });
   accessChanged();
@@ -1070,12 +1099,13 @@ app.post('/api/trash/projects/:id/restore', needTeam, (req, res) => {
 });
 
 app.delete('/api/trash/boards/:id', needTeam, (req, res) => {
-  if (![...store.trash.values()].some((b) => b.trashRoot === req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
+  if (!canTrashBoard(req.user, req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
   store.purgeRoot(req.params.id);
   res.json({ ok: true });
 });
 
 app.delete('/api/trash/projects/:id', needTeam, (req, res) => {
+  if (!canTrashProject(req.user, req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
   if (!store.purgeProject(req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
   res.json({ ok: true });
 });
@@ -1102,7 +1132,8 @@ app.post('/api/uploads', (req, res) => {
   if (!Number.isFinite(size) || size < 0) return res.status(400).json({ error: 'Missing file size' });
   if (size > MAX_UPLOAD) return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_MB} MB` });
   const target = req.body?.boardId ? store.get(req.body.boardId) : null;
-  if (!perms.isTeam(req.user) && !perms.can(req.user, target, 'edit')) return res.status(403).json({ error: 'You can’t upload to this board' });
+  // Into a board: edit access there. Without one (e.g. a project cover): the core team.
+  if (target ? !perms.can(req.user, target, 'edit') : !perms.isTeam(req.user)) return res.status(403).json({ error: 'You can’t upload to this board' });
   const id = crypto.randomUUID();
   const file = path.join(TMP_DIR, id);
   fs.writeFileSync(file, '');
@@ -1208,10 +1239,10 @@ app.get('/api/storage', needTeam, (_req, res) => {
   res.json({ mode: files.mode, files: Object.keys(files.index.files).length });
 });
 
-// Guests can only load files that appear on boards they can see.
+// People can only load files that appear on boards they can see (admins: every file).
 app.use('/uploads', (req, res, next) => {
   const url = `/uploads/${path.basename(decodeURIComponent(req.path))}`;
-  if (recentUploads.get(ownerKey(req.user))?.has(url) || perms.canReadFile(req.user, url)) return next();
+  if (recentUploads.get(ownerKey(req.user))?.has(url) || perms.canReadFile(req.user, url, templates)) return next();
   res.status(404).json({ error: 'File not found' });
 });
 

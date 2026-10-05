@@ -151,7 +151,7 @@ export function Sidebar(props: Props) {
           </>
         )}
       </div>
-      {(isTeam || (activeProject && ['edit', 'manage'].includes(projects.find((p) => p.id === activeProject)?.myLevel || ''))) && (
+      {(activeProject ? ['edit', 'manage'].includes(projects.find((p) => p.id === activeProject)?.myLevel || '') : isTeam) && (
         <button className="btn new-board" onClick={() => onCreate(activeProject)}><IconPlus size={15} /> New board</button>
       )}
       {isTeam && (

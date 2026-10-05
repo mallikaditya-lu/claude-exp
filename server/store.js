@@ -64,7 +64,8 @@ export class Store {
     return this.boards.get(id) || null;
   }
 
-  create({ title, parentId = null, projectId = null, items = {}, connections = {} }) {
+  /** `by`: the creator's email. A board outside any project starts out shared with them alone. */
+  create({ title, parentId = null, projectId = null, items = {}, connections = {}, by = null }) {
     const now = Date.now();
     const parent = parentId ? this.boards.get(parentId) : null;
     const board = {
@@ -81,6 +82,8 @@ export class Store {
       createdAt: now,
       updatedAt: now,
     };
+    if (by) board.createdBy = by;
+    if (by && !board.parentId && !board.projectId) board.members = { [by]: { role: 'editor', invitedBy: by, invitedAt: now } };
     this.boards.set(board.id, board);
     this.persist(board.id);
     return board;
@@ -198,7 +201,7 @@ export class Store {
    * Copy a board and every board nested in it. The copy goes under `parentId` (or the top level
    * of the same project). Comments, notes, invites and share links are not copied.
    */
-  duplicate(id, parentId = null) {
+  duplicate(id, parentId = null, by = null) {
     const src = this.boards.get(id);
     if (!src) return null;
     const ids = this.subtree(id);
@@ -227,6 +230,8 @@ export class Store {
       this.boards.set(copy.id, copy);
     }
     const root = this.boards.get(map.get(id));
+    // A copy outside any project would otherwise be admin-only: share it with whoever made it.
+    if (by && !root.parentId && !root.projectId) root.members = { [by]: { role: 'editor', invitedBy: by, invitedAt: now } };
     for (const nid of map.values()) {
       const b = this.boards.get(nid);
       if (nid !== root.id) b.projectId = root.projectId;
@@ -372,13 +377,19 @@ export class Store {
     return [...this.projects.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  createProject({ name, color }) {
+  /** `by`: the creator's email; they become the project's first editor. */
+  createProject({ name, color }, by = null) {
+    const now = Date.now();
     const project = {
       id: crypto.randomUUID(),
       name: String(name || 'Untitled project').slice(0, 120),
       color: typeof color === 'string' ? color.slice(0, 20) : 'purple',
-      createdAt: Date.now(),
+      createdAt: now,
     };
+    if (by) {
+      project.createdBy = by;
+      project.members = { [by]: { role: 'editor', invitedBy: by, invitedAt: now } };
+    }
     this.projects.set(project.id, project);
     this.saveProjects();
     return project;
@@ -394,7 +405,7 @@ export class Store {
     return p;
   }
 
-  // ---------- project members (people outside the core team) ----------
+  // ---------- project members (anyone but admins, who see every project) ----------
   // project.members: { [email]: { role: 'editor' | 'commenter' | 'viewer', invitedBy, invitedAt } }
   setMember(projectId, email, role, invitedBy) {
     const p = this.projects.get(projectId);

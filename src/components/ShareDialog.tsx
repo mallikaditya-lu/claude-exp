@@ -6,7 +6,7 @@ import { Avatar } from './items/TextCards';
 import { IconX } from './icons';
 
 const ROLE_INFO: Record<MemberRole, { label: string; hint: string }> = {
-  editor: { label: 'Can edit', hint: 'Add, move and change cards, upload files' },
+  editor: { label: 'Can edit', hint: 'Add, move and change cards, upload files. Core team editors can also share, rename and delete the project.' },
   commenter: { label: 'Can comment', hint: 'View and leave comments' },
   viewer: { label: 'Can view', hint: 'Look only' },
 };
@@ -18,7 +18,7 @@ interface Props {
   notify: (msg: string) => void;
 }
 
-/** Invite freelancers and clients to one project. The core team already sees everything. */
+/** Invite people to one project: the core team, freelancers and clients. Only admins see every project. */
 export function ShareDialog({ project, onClose, notify }: Props) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<MemberRole>('editor');
@@ -83,8 +83,8 @@ export function ShareDialog({ project, onClose, notify }: Props) {
           <div className="share-row is-team">
             <span className="avatar team-avatar">LU</span>
             <div className="share-who">
-              <b>Little Unusual core team</b>
-              <span>Everyone on the team can see and edit all projects</span>
+              <b>Admins</b>
+              <span>Admins can see every project</span>
             </div>
             <span className="share-role-fixed">Full access</span>
           </div>
@@ -92,7 +92,7 @@ export function ShareDialog({ project, onClose, notify }: Props) {
             <div className="share-row" key={m.email}>
               <Avatar name={m.name || m.email} size={30} />
               <div className="share-who">
-                <b>{m.name || m.email}</b>
+                <b>{m.name || m.email}{m.email === project.createdBy ? <span className="share-tag">Owner</span> : m.team ? <span className="share-tag">Team</span> : null}</b>
                 <span>
                   {m.name ? `${m.email} · ` : ''}
                   {m.lastSeen ? `active ${timeAgo(m.lastSeen)}` : 'invited — hasn’t signed in yet'}
@@ -114,11 +114,11 @@ export function ShareDialog({ project, onClose, notify }: Props) {
               </button>
             </div>
           ))}
-          {!members.length && <div className="share-empty">No one outside the core team has access yet.</div>}
+          {!members.length && <div className="share-empty">Only admins can see this project so far. Invite the people working on it.</div>}
         </div>
 
         <div className="modal-foot">
-          <span className="share-foot-note">Invited people sign in with a one-time code sent to their email. They only see this project.</span>
+          <span className="share-foot-note">The team signs in with their Little Unusual Google account, others with a one-time code sent to their email. They only see the projects they’re invited to.</span>
           <button className="btn" onClick={copyLink}>Copy link</button>
         </div>
       </div>

@@ -5,7 +5,7 @@ import path from 'node:path';
 //
 // Global roles:
 //   admin  – everything, plus the admin dashboard (people, roles, inactivity settings)
-//   team   – core team: sees and edits every project, can invite people to projects
+//   team   – core team: creates projects and boards, sees the ones they made or were invited to
 //   guest  – freelancers and clients: only sees projects they've been invited to, with the
 //            role given there (editor / commenter / viewer)
 //

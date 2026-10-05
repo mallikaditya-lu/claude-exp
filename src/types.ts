@@ -131,13 +131,16 @@ export interface BoardSummary {
   itemCount: number;
   cover: string | null;
   openComments?: number;
+  /** What the current person can do on this board. */
+  access?: Access;
 }
 
 export type Access = 'manage' | 'edit' | 'comment' | 'view';
 export type MemberRole = 'editor' | 'commenter' | 'viewer';
 export type GlobalRole = 'admin' | 'team' | 'guest';
 
-export interface ProjectMember { email: string; role: MemberRole; invitedBy?: string; invitedAt?: number; name?: string | null; lastSeen?: number }
+/** `team`: on the core team (a team editor can also share and manage). */
+export interface ProjectMember { email: string; role: MemberRole; invitedBy?: string; invitedAt?: number; name?: string | null; lastSeen?: number; team?: boolean }
 
 export interface Project {
   id: string;
@@ -148,7 +151,9 @@ export interface Project {
   cover?: string | null;
   /** What the current person can do in this project. */
   myLevel?: Access | null;
-  /** Only sent to the core team. */
+  /** Who made it (null for projects from before creators were recorded). */
+  createdBy?: string | null;
+  /** Only sent to people who manage the project. */
   members?: ProjectMember[];
 }
 

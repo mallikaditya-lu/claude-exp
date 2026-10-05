@@ -393,7 +393,7 @@ export function createMcp(ctx) {
       return perms.visibleProjects(user).map((p) => ({
         id: p.id, name: p.name, your_access: p.myLevel || 'some boards',
         boards: boards.filter((b) => b.projectId === p.id && !b.parentId).map((b) => ({ id: b.id, title: b.title, cards: b.itemCount })),
-      })).concat(perms.isTeam(user) ? [{ id: null, name: 'Boards without a project', boards: boards.filter((b) => !b.projectId && !b.parentId).map((b) => ({ id: b.id, title: b.title, cards: b.itemCount })) }] : []);
+      })).concat(boards.some((b) => !b.projectId && !b.parentId) ? [{ id: null, name: 'Boards without a project', boards: boards.filter((b) => !b.projectId && !b.parentId).map((b) => ({ id: b.id, title: b.title, cards: b.itemCount })) }] : []);
     },
 
     list_boards(user, { project_id }) {
@@ -480,9 +480,9 @@ export function createMcp(ctx) {
       const projectId = parent ? parent.projectId : project_id || null;
       if (!parent) {
         if (projectId && !store.projects.has(projectId)) throw new ToolError(`Project ${projectId} not found.`);
-        if (!perms.isTeam(user) && !atLeast(perms.projectLevel(user, projectId), 'edit')) throw new ToolError('You can’t create boards there.');
+        if (projectId ? !atLeast(perms.projectLevel(user, projectId), 'edit') : !perms.isTeam(user)) throw new ToolError('You can’t create boards there.');
       }
-      const nb = store.create({ title: String(title || 'Untitled board').slice(0, 200), parentId: parent?.id || null, projectId });
+      const nb = store.create({ title: String(title || 'Untitled board').slice(0, 200), parentId: parent?.id || null, projectId, by: user.email || null });
       if (parent) {
         const origin = freeOrigin(parent);
         apply(parent, { upsertItems: [{ id: uid(), type: 'board', boardId: nb.id, x: origin.x, y: origin.y, w: WIDTH.board, z: Date.now() % 1e9, createdBy: via, createdAt: Date.now() }] });
