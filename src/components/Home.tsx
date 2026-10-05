@@ -86,15 +86,16 @@ function HomeInner(props: Props & { onCover: (t: CoverTarget) => void }) {
   // ---------- single project ----------
   if (project) {
     const inProject = topLevel.filter((b) => b.projectId === project.id);
-    const canCreate = isTeam || project.myLevel === 'edit' || project.myLevel === 'manage';
+    const canCreate = project.myLevel === 'edit' || project.myLevel === 'manage';
+    const canManage = project.myLevel === 'manage';
     return (
       <div className="home">
         <Topbar
           sidebarOpen={sidebarOpen}
           toggleSidebar={toggleSidebar}
           actions={<>
-            {!isTeam && project.myLevel && <span className="access-pill">{ACCESS_LABEL[project.myLevel]}</span>}
-            {isTeam && (
+            {!canManage && project.myLevel && <span className="access-pill">{ACCESS_LABEL[project.myLevel]}</span>}
+            {canManage && (
               <button className="btn" onClick={() => onShare(project.id)}>
                 <IconUsers size={15} /> Share{project.members?.length ? ` · ${project.members.length}` : ''}
               </button>
@@ -117,7 +118,7 @@ function HomeInner(props: Props & { onCover: (t: CoverTarget) => void }) {
               </button>
             )}
           </div>
-          {!inProject.length && isTeam && (
+          {!inProject.length && canManage && (
             <p className="home-hint">Create a board here, or move an existing one in with the ⋯ menu on any board.</p>
           )}
         </div>
@@ -174,7 +175,7 @@ function HomeInner(props: Props & { onCover: (t: CoverTarget) => void }) {
                       ? covers.map((c) => <img key={c} src={c} alt="" loading="lazy" />)
                       : <IconFolder size={36} />}
                 </div>
-                {isTeam && (
+                {p.myLevel === 'manage' && (
                   <TileMenu label="Project options">
                     {(close) => (
                       <>
@@ -189,8 +190,8 @@ function HomeInner(props: Props & { onCover: (t: CoverTarget) => void }) {
                   <div className="board-tile-title">{p.name}</div>
                   <div className="board-tile-meta">
                     {list.length} board{list.length === 1 ? '' : 's'}{updated ? ` · ${timeAgo(updated)}` : ''}
-                    {isTeam && p.members?.length ? ` · shared with ${p.members.length}` : ''}
-                    {!isTeam && p.myLevel ? ` · ${ACCESS_LABEL[p.myLevel].toLowerCase()}` : ''}
+                    {p.members && p.members.length > 1 ? ` · ${p.members.length} people` : ''}
+                    {p.myLevel && p.myLevel !== 'manage' ? ` · ${ACCESS_LABEL[p.myLevel].toLowerCase()}` : ''}
                   </div>
                 </div>
               </div>
@@ -266,7 +267,8 @@ function TileMenu({ label, children }: { label: string; children: (close: () => 
   );
 }
 
-function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCover }: Props & { project: Project; count: number; onDeleteProject: () => void; onCover: (t: CoverTarget) => void }) {
+function ProjectHeader({ project, count, notify, onDeleteProject, onCover }: Props & { project: Project; count: number; onDeleteProject: () => void; onCover: (t: CoverTarget) => void }) {
+  const canManage = project.myLevel === 'manage';
   const [name, setName] = useState(project.name);
   useEffect(() => setName(project.name), [project.name]);
   const save = (fields: Partial<Project>) => api.updateProject(project.id, fields).catch((err) => notify(err.message));
@@ -276,7 +278,7 @@ function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCove
       <span className="project-dot" style={{ background: color(project.color, 'solid') }} />
       <input
         className="project-name"
-        readOnly={!isTeam}
+        readOnly={!canManage}
         value={name}
         size={Math.max(6, name.length + 1)}
         onChange={(e) => setName(e.target.value)}
@@ -289,7 +291,7 @@ function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCove
       />
       <span className="project-count">{count} board{count === 1 ? '' : 's'}</span>
       <div className="grow" />
-      {isTeam && <div className="swatches">
+      {canManage && <div className="swatches">
         {Object.entries(COLORS).filter(([k]) => k !== 'default').map(([k, c]) => (
           <button
             key={k}
@@ -300,12 +302,12 @@ function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCove
           />
         ))}
       </div>}
-      {isTeam && (
+      {canManage && (
         <button className="btn" title="Choose this project’s cover image" onClick={() => onCover({ kind: 'project', id: project.id })}>
           <IconImage size={15} /> Cover
         </button>
       )}
-      {isTeam && (
+      {canManage && (
         <button className="icon-btn danger" title="Delete project (to the trash, restorable for 30 days)" onClick={onDeleteProject}>
           <IconTrash size={16} />
         </button>
@@ -314,7 +316,7 @@ function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCove
   );
 }
 
-function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, isTeam, onCover, notify }: Props & { board: BoardSummary; subCount: number; showProject: boolean; onCover: (t: CoverTarget) => void }) {
+function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, onCover, notify }: Props & { board: BoardSummary; subCount: number; showProject: boolean; onCover: (t: CoverTarget) => void }) {
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const project = projects.find((p) => p.id === b.projectId);
@@ -346,7 +348,7 @@ function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenPr
           </button>
         )}
       </div>
-      {!b.parentId && isTeam && (
+      {!b.parentId && b.access === 'manage' && (
         <div className="tile-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
           <button className="icon-btn tile-menu-btn" title="Board options" onClick={() => setMenu((m) => !m)}>
             <IconMore size={16} />
@@ -354,7 +356,7 @@ function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenPr
           {menu && (
             <div className="menu">
               <div className="menu-label">Move to project</div>
-              {projects.map((p) => (
+              {projects.filter((p) => p.myLevel === 'edit' || p.myLevel === 'manage').map((p) => (
                 <button key={p.id} className={`menu-item ${p.id === b.projectId ? 'is-active' : ''}`} onClick={() => { onMove(b.id, p.id); setMenu(false); }}>
                   <span className="project-dot" style={{ background: color(p.color, 'solid') }} /> {p.name}
                 </button>

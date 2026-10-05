@@ -172,8 +172,8 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
         <button
           className="btn primary"
           onClick={() => {
-            // The team shares the board (invites and links); everyone else is told why they can't.
-            if (isTeam) onShare(boardId);
+            // The board's managers share it (invites and links); everyone else is told why they can't.
+            if (board?.access === 'manage') onShare(boardId);
             else setGuestShare(true);
           }}
         >
@@ -188,9 +188,15 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
               <button className="icon-btn" onClick={() => setGuestShare(false)} aria-label="Close"><IconX size={16} /></button>
             </div>
             <p className="guest-share-text">
-              Inviting people and share links are for the Little Unusual core team.
-              {myEmail ? <> You’re signed in as <b>{myEmail}</b>, which is a guest account.</> : null}
-              {' '}An admin can add you to the core team on the Admin page.
+              {isTeam ? (
+                <>Only the board’s team editors can invite people or make share links. Ask whoever shared it with you to make you an editor.</>
+              ) : (
+                <>
+                  Inviting people and share links are for the Little Unusual core team.
+                  {myEmail ? <> You’re signed in as <b>{myEmail}</b>, which is a guest account.</> : null}
+                  {' '}An admin can add you to the core team on the Admin page.
+                </>
+              )}
             </p>
             <div className="modal-foot">
               <span className="share-foot-note">People who already have access can open this board with its link.</span>

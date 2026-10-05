@@ -51,7 +51,7 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
   const run = (p: Promise<unknown>, msg: string) => p.then(() => { notify(msg); load(); }).catch((err) => notify(err.message));
 
   const setRole = (person: AdminPerson, role: GlobalRole) => {
-    if (role !== 'guest' && person.projects.length && !window.confirm(`${person.email} will see every project as ${ROLE_LABEL[role]}. Their project invites become unnecessary and will be removed. Continue?`)) return;
+    if (role === 'admin' && (person.projects.length || person.boards.length) && !window.confirm(`${person.email} will see every project as an admin. Their project and board invites become unnecessary and will be removed. Continue?`)) return;
     run(api.setPersonRole(person.email, role), `${person.email} is now ${ROLE_LABEL[role]}`);
   };
 

@@ -23,7 +23,7 @@ edits, presence and cursors live.
 
 ## Projects and backgrounds
 
-- **Projects** group boards like folders. The home page shows every project, recently updated boards, and boards without a project. Open a project to see only its boards. Nested boards follow their parent's project.
+- **Projects** group boards like folders. The home page shows your projects (the ones you created or were invited to; admins see all), recently updated boards, and boards without a project. Open a project to see only its boards. Nested boards follow their parent's project.
 - The **⋯** menu on a board tile moves it to another project, duplicates it (with the boards inside), changes its cover, or deletes it. Project tiles have a ⋯ menu too (cover, delete), and a project page has a **Cover** button. Covers can be any image in the project or a new upload; "automatic" uses the first image on its boards.
 - **Trash:** deleting a board or project moves it (with the boards inside) to **Trash** in the sidebar for 30 days. Restore it from there (a board's card comes back on its parent board), or delete it forever. After 30 days it's deleted automatically.
 - **Board background:** use the palette button in a board's top bar. Dark backgrounds (Graphite, Charcoal, Midnight, Forest) switch that board's cards and tools to dark grey. The choice is saved on the board, so everyone sees it.
@@ -126,17 +126,18 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 
 | Role | Who | Can |
 | --- | --- | --- |
-| **Admin** | `ADMIN_EMAILS` (default `admin@littleunusual.com`), plus anyone promoted | Everything, plus the **Admin** page: people, roles, inactivity settings |
-| **Core team** | Anyone with an email in `TEAM_DOMAINS` (default `littleunusual.co`, `littleunusual.com`), plus anyone added on the Admin page | See and edit every project, create projects, invite people |
-| **Guest** | Everyone else (freelancers, clients) | Only the projects and boards they're invited to, as **editor**, **commenter** or **viewer** |
+| **Admin** | `ADMIN_EMAILS` (default `admin@littleunusual.com`), plus anyone promoted | **Sees every project and board**, plus the **Admin** page: people, roles, inactivity settings |
+| **Core team** | Anyone with an email in `TEAM_DOMAINS` (default `littleunusual.co`, `littleunusual.com`), plus anyone added on the Admin page | Create projects and boards, use templates. Sees **only the projects and boards they created or were invited to**. As an **editor** they can also share, rename, cover, move and delete them |
+| **Guest** | Everyone else (freelancers, clients) | Only the projects and boards they're invited to, as **editor**, **commenter** or **viewer** (guest editors can't share or delete) |
 | **Link visitor** | Anyone who opens a share link (no sign-in) | Only the shared board and the boards inside it, as **viewer** or **commenter** |
 
-- **Sharing one board:** open the board and click **Share**. Invite people by email to just that board (and the boards inside it), or turn on the link.
+- **Projects are private by default:** whoever creates a project (or a board outside any project) is its first editor, and nobody else on the team sees it until they're invited. Invite teammates from **Share** the same way as guests. Projects from before this rule have no creator and are admin-only until an admin shares them.
+- **Sharing one board:** open the board and click **Share** (the board's team editors and admins). Invite people by email to just that board (and the boards inside it), or turn on the link.
 - **Share links:** *Anyone with the link can view* or *…can comment*. No sign-in or email invite is needed: visitors type their name and email (the team can turn that off for view-only links; commenting always asks). They're remembered on that device, and entering the same email on another device brings back their comments. They can comment, reply, resolve, and edit or delete their own comments; the **Comments** panel lists every thread, with an *Only yours* filter. Editing always needs an email invite. **Reset link** makes a new link and stops the old one; switching the link off removes access straight away, even for people who have it open. Visitors' names and emails aren't verified, so a link is for review, not for anything confidential. The Admin page lists everyone who has opened a link.
-- **Inviting to a project:** open a project and click **Share**. Enter emails and pick *Can edit / Can comment / Can view*. Guests sign in with a one-time code and see only those projects. Removing someone takes effect immediately, even if they have the board open.
+- **Inviting to a project:** open a project and click **Share**. Enter emails (teammates or guests) and pick *Can edit / Can comment / Can view*. Guests sign in with a one-time code; everyone sees only the projects they're in. Removing someone takes effect immediately, even if they have the board open.
 - **Commenters** can pin comments, reply, resolve threads, and edit or delete their own comments. They can't change cards. **Editors** can also delete anyone's comments. **Viewers** can read comments but not add them.
 - **Inactive guests** lose their project and board access after the period set on the Admin page (default 60 days). Invites that were never used are removed too. The core team is never removed.
-- **Enforcement:** the server applies every rule to boards, files, uploads, live updates and board lists. A guest can't reach another project's boards or files by guessing links.
+- **Enforcement:** the server applies every rule to boards, files, uploads, live updates, board lists, Trash and the Claude connector. Nobody but an admin can reach another project's boards or files by guessing links.
 - For invites to work without editing Cloudflare each time, the Cloudflare Access policy should let anyone sign in with a one-time PIN. The app then decides what each person can see.
 
 ### Claude connector (MCP)

@@ -6,9 +6,9 @@ import { Avatar } from './items/TextCards';
 import { IconX } from './icons';
 
 const ROLE_INFO: Record<MemberRole, { label: string; hint: string }> = {
-  editor: { label: 'Can edit', hint: 'Add, move and change cards, upload files. They sign in with a one-time code sent to their email.' },
-  commenter: { label: 'Can comment', hint: 'View and leave comments. They sign in with a one-time code sent to their email.' },
-  viewer: { label: 'Can view', hint: 'Look only. They sign in with a one-time code sent to their email.' },
+  editor: { label: 'Can edit', hint: 'Add, move and change cards, upload files. Core team editors can also share it.' },
+  commenter: { label: 'Can comment', hint: 'View and leave comments.' },
+  viewer: { label: 'Can view', hint: 'Look only.' },
 };
 
 const LINK_LABEL: Record<LinkMode, string> = {
@@ -170,8 +170,8 @@ export function BoardShareDialog({ boardId, title, onClose, onOpenProjectShare, 
                 <div className="share-row is-team">
                   <span className="avatar team-avatar">LU</span>
                   <div className="share-who">
-                    <b>Little Unusual core team</b>
-                    <span>Everyone on the team can see and edit every board</span>
+                    <b>Admins</b>
+                    <span>Admins can see every board</span>
                   </div>
                   <span className="share-role-fixed">Full access</span>
                 </div>
@@ -179,7 +179,7 @@ export function BoardShareDialog({ boardId, title, onClose, onOpenProjectShare, 
                   <div className="share-row" key={m.email}>
                     <Avatar name={m.name || m.email} size={30} />
                     <div className="share-who">
-                      <b>{m.name || m.email}</b>
+                      <b>{m.name || m.email}{m.team ? <span className="share-tag">Team</span> : null}</b>
                       <span>{m.name ? `${m.email} · ` : ''}{m.lastSeen ? `active ${timeAgo(m.lastSeen)}` : 'invited, hasn’t signed in yet'}</span>
                     </div>
                     <select

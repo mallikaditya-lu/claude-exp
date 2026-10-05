@@ -33,6 +33,11 @@ export class Templates {
     return this.list.find((t) => t.id === id) || null;
   }
 
+  /** Is this uploaded file shown in any template? (Templates are shared by the whole core team.) */
+  usesFile(url) {
+    return this.list.some((t) => JSON.stringify(t.items).includes(url));
+  }
+
   create({ name, category, items, connections }, by) {
     if (!Array.isArray(items) || !items.length) throw new Error('Select some cards to save as a template');
     if (items.length > 500) throw new Error('That’s too many cards for one template');
