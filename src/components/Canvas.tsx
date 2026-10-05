@@ -46,6 +46,13 @@ const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'
 const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
 const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 60, video: 120, link: 160, board: 120 };
 const TEXT_SIZED: ItemType[] = ['note', 'heading', 'todo', 'table'];
+const TEXT_STYLES: [string, '' | 'h1' | 'h2' | 'h3' | 'label'][] = [['Text', ''], ['H1', 'h1'], ['H2', 'h2'], ['H3', 'h3'], ['Label', 'label']];
+
+function htmlToPlain(html = '') {
+  const d = document.createElement('div');
+  d.innerHTML = html.replace(/<\/(p|div|h\d|li)>/gi, '\n');
+  return (d.textContent || '').replace(/\n+/g, ' ').trim();
+}
 const TEXT_SIZES: [string, number][] = [['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['2XL', 34]];
 const MEDIA_SIZED: ItemType[] = ['image', 'video', 'link', 'audio', 'file'];
 const MEDIA_SIZES: [string, number][] = [['S', 220], ['M', 380], ['L', 620], ['XL', 960]];
@@ -429,6 +436,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     if (tool === 'image') return pickFiles('image/*', at);
     if (tool === 'upload') return pickFiles('', at);
     if (tool === 'board') { addBoard(at); return; }
+    // "Heading" is now a style of the Text card.
+    if (tool === 'heading') { addItem('note', at, { textStyle: 'h1' }); return; }
     addItem(tool, at);
   }, [addBoard, addItem, placeAt, setCommentUi, toggleCommentMode]);
 
@@ -636,6 +645,20 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       notify((err as Error).message);
     }
   }, [notify]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Text card styles: Text / H1 / H2 / H3, or Label (the coloured heading card). */
+  const setTextStyle = useCallback((it: Item, style: '' | 'h1' | 'h2' | 'h3' | 'label') => {
+    if (style === 'label') {
+      if (it.type === 'heading') return;
+      updateItem(it.id, { type: 'heading', text: htmlToPlain(it.text), textStyle: undefined, color: it.color || 'purple' });
+      return;
+    }
+    if (it.type === 'heading') {
+      updateItem(it.id, { type: 'note', text: textToHtml(it.text || ''), textStyle: style || undefined, color: undefined });
+      return;
+    }
+    updateItem(it.id, { textStyle: style || undefined });
+  }, [updateItem]);
 
   /** ⌘G: put the selected cards into a new group, keeping their reading order. */
   const groupSelection = useCallback(() => {
@@ -1493,6 +1516,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                     <span className="sep" />
                   </>
                 )}
+                {single && (single.type === 'note' || single.type === 'heading') && (
+                  <>
+                    <div className="seg compact" title="Text style">
+                      {TEXT_STYLES.map(([label, style]) => {
+                        const on = style === 'label' ? single.type === 'heading' : single.type === 'note' && (single.textStyle || '') === style;
+                        return <button key={label} className={on ? 'is-on' : ''} onClick={() => setTextStyle(single, style)}>{label}</button>;
+                      })}
+                    </div>
+                    <span className="sep" />
+                  </>
+                )}
                 {selItems.length > 0 && selItems.every((it) => TEXT_SIZED.includes(it.type)) && (
                   <>
                     <span className="bar-label">Text</span>
@@ -1571,7 +1605,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           <QuickAdd
             left={quickAdd.left}
             top={quickAdd.top}
-            tools={(['note', 'heading', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
+            tools={(['note', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
             templates={isTeamHere ? templates : null}
             onPick={pickQuick}
             onDeleteTemplate={isTeamHere ? (t) => {

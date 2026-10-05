@@ -4,11 +4,14 @@ import { Editable } from './Editable';
 
 export function NoteCard({ item, editing, update, setEditing }: CardProps) {
   return (
-    <div className="note" style={{ background: color(item.color, 'tint') }}>
+    <div
+      className={`note ${item.textStyle ? `text-${item.textStyle}` : ''}`}
+      style={{ background: item.textStyle && !item.color ? 'transparent' : color(item.color, 'tint') }}
+    >
       <Editable
         value={item.text}
         editing={editing}
-        placeholder="Start typing…"
+        placeholder={item.textStyle ? 'Heading' : 'Start typing…'}
         onChange={(text) => update({ text }, `text-${item.id}`)}
         onDone={() => setEditing(false)}
       />

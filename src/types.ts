@@ -66,6 +66,8 @@ export interface Item {
   cols?: number;
   /** Text size in px for text cards (notes, headings, to-dos, tables). Unset = 14. */
   fontSize?: number;
+  /** Text cards: heading levels (unset = normal text). The coloured 'heading' type is the Label style. */
+  textStyle?: 'h1' | 'h2' | 'h3';
   comments?: CommentEntry[];
   createdBy?: string;
   createdAt?: number;

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import {
-  IconBoard, IconColumn, IconComment, IconFolder, IconHeading, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
+  IconBoard, IconColumn, IconComment, IconFolder, IconImage, IconLine, IconLink, IconNote, IconTable, IconTodo, IconUpload,
 } from './icons';
 
 export type Tool =
@@ -9,8 +9,7 @@ export type Tool =
 export const TOOL_MIME = 'application/x-rb-tool';
 
 export const TOOLS: { id: Tool; label: string; icon: ReactNode; hint: string }[] = [
-  { id: 'note', label: 'Note', icon: <IconNote />, hint: 'Rich text note (N)' },
-  { id: 'heading', label: 'Heading', icon: <IconHeading />, hint: 'Coloured section label (H)' },
+  { id: 'note', label: 'Text', icon: <IconNote />, hint: 'Text: paragraph, heading or label; change the style in the selection bar (N, or H for a heading)' },
   { id: 'link', label: 'Link', icon: <IconLink />, hint: 'Web link or embed: YouTube, Spotify, Figma… (L)' },
   { id: 'todo', label: 'To-do', icon: <IconTodo />, hint: 'Checklist (T)' },
   { id: 'line', label: 'Line', icon: <IconLine />, hint: 'Connect two cards (C)' },
