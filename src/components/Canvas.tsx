@@ -471,7 +471,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const boardCards = [...ids].map((id) => b.items[id]).filter((it) => it.type === 'board' && it.boardId);
     if (boardCards.length) {
       const names = boardCards.map((it) => `“${boards[it.boardId!]?.title || 'Untitled'}”`).join(', ');
-      if (!window.confirm(`Delete ${names} and everything inside? This can’t be undone.`)) return;
+      if (!window.confirm(`Move ${names} and the boards inside to the trash? You can restore from Trash for 30 days.`)) return;
     }
     change((bb) => {
       const next = { ...bb.items };

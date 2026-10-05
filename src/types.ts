@@ -142,6 +142,8 @@ export interface Project {
   name: string;
   color: string;
   createdAt: number;
+  /** Chosen cover image (otherwise the project's board covers are shown). */
+  cover?: string | null;
   /** What the current person can do in this project. */
   myLevel?: Access | null;
   /** Only sent to the core team. */
@@ -168,6 +170,7 @@ export interface Patch {
   title?: string;
   background?: string | null;
   projectId?: string | null;
+  cover?: string | null;
   upsertItems?: Item[];
   removeItems?: string[];
   upsertConnections?: Connection[];

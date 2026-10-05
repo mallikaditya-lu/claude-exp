@@ -105,7 +105,7 @@ export class Permissions {
     return all
       .filter((p) => team || p.members?.[user?.email] || viaBoards.has(p.id))
       .map((p) => {
-        const out = { id: p.id, name: p.name, color: p.color, createdAt: p.createdAt, myLevel: this.projectLevel(user, p.id) };
+        const out = { id: p.id, name: p.name, color: p.color, cover: p.cover || null, createdAt: p.createdAt, myLevel: this.projectLevel(user, p.id) };
         // Only the team sees who else is in a project.
         if (team) out.members = Object.entries(p.members || {}).map(([email, m]) => ({ email, ...m, name: this.users.get(email)?.name || null, lastSeen: this.users.get(email)?.lastSeen || 0 }));
         return out;
@@ -115,6 +115,8 @@ export class Permissions {
   /** Uploaded files: guests may load a file only if it's used on a board they can see. */
   canReadFile(user, url) {
     if (this.isTeam(user)) return true;
+    // A project's cover image, for anyone who can see the project.
+    if (!user?.visitor && this.visibleProjects(user).some((p) => p.cover === url)) return true;
     for (const b of this.store.boards.values()) {
       if (!this.boardLevel(user, b)) continue;
       for (const it of Object.values(b.items)) {
@@ -122,6 +124,7 @@ export class Permissions {
         // Images and videos inside table cells.
         if (it.table && JSON.stringify(it.table).includes(url)) return true;
       }
+      if (b.cover === url) return true;
       // Files once added to the board (the Assets panel keeps them after their card is deleted).
       if (b.assets?.some((a) => a.url === url)) return true;
     }

@@ -986,3 +986,29 @@ kbd { font: inherit; font-size: 11.5px; padding: 1px 5px; border-radius: 4px; bo
 .note-row:hover .note-swatch { opacity: 1; }
 .note-swatch.is-on { border-color: var(--text); opacity: 1; }
 .guest-share-text { color: var(--muted); margin: 0; line-height: 1.5; }
+
+/* While dragging, embedded players must not swallow the mouse (else the drag never ends). */
+.canvas.is-dragging :is(iframe, video, audio) { pointer-events: none; }
+
+/* ---------- trash, covers, tile menus ---------- */
+.trash-list { display: flex; flex-direction: column; gap: 8px; max-width: 820px; }
+.trash-row { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow-sm); }
+.trash-icon { width: 44px; height: 44px; border-radius: 8px; background: var(--hover); display: grid; place-items: center; overflow: hidden; flex: none; color: var(--accent); }
+.trash-icon img { width: 100%; height: 100%; object-fit: cover; }
+.trash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.trash-main b, .trash-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-main span { font-size: 12.5px; color: var(--faint); }
+.cover-picker { max-width: 640px; }
+.cover-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.cover-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; max-height: 50vh; overflow: auto; }
+.cover-option { aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden; padding: 0; border: 3px solid transparent; background: var(--hover); }
+.cover-option img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover-option:hover { border-color: var(--accent-soft); }
+.cover-option.is-on { border-color: var(--accent); }
+/* Tile menus must not be clipped by the tile. */
+.board-tile, .project-tile { overflow: visible; }
+.board-tile-cover { border-radius: 10px 10px 0 0; }
+.project-cover { border-radius: 8px 8px 0 0; }
+.board-tile:has(.menu), .project-tile:has(.menu) { z-index: 20; }
+.tile-menu .menu { max-height: 340px; overflow: auto; }
+.project-tile:hover .tile-menu-btn { opacity: 1; }

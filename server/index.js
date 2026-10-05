@@ -267,10 +267,13 @@ app.patch('/api/projects/:id', needTeam, (req, res) => {
   res.json(project);
 });
 
+// Deleting a project moves it, with all of its boards, to the trash for 30 days.
 app.delete('/api/projects/:id', needTeam, (req, res) => {
-  if (!store.deleteProject(req.params.id)) return res.status(404).json({ error: 'Project not found' });
-  broadcastIndex();
-  res.json({ ok: true });
+  const ids = store.trashProject(req.params.id, req.user.name || req.user.email || 'team');
+  if (!ids) return res.status(404).json({ error: 'Project not found' });
+  for (const id of ids) broadcast(id, { t: 'deleted', boardId: id });
+  accessChanged();
+  res.json({ ok: true, boards: ids.length });
 });
 
 // Invite someone to a project (or change their role there). Team only.
@@ -499,6 +502,7 @@ app.post('/api/boards/:id/patch', (req, res) => {
   if (level === 'comment') return res.status(403).json({ error: 'You can comment on this board, but not change it' });
   // Moving boards between projects changes who can see them: team only.
   if (patch.projectId !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can move boards between projects' });
+  if (patch.cover !== undefined && level !== 'manage') return res.status(403).json({ error: 'Only the core team can change board covers' });
   const result = store.applyPatch(req.params.id, patch);
   const origin = String(req.headers['x-client-id'] || '');
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
@@ -736,7 +740,8 @@ app.delete('/api/boards/:id', needTeam, (req, res) => {
   if (!board) return res.status(404).json({ error: 'Board not found' });
   // Remove any board cards that point at this board from its parent.
   const parent = board.parentId ? store.get(board.parentId) : null;
-  const deleted = store.delete(req.params.id);
+  // To the trash (restorable for 30 days), with the boards nested inside it.
+  const deleted = store.trashBoard(req.params.id, req.user.name || req.user.email || 'team');
   if (parent) {
     const stale = Object.values(parent.items).filter((i) => i.type === 'board' && deleted.includes(i.boardId)).map((i) => i.id);
     if (stale.length) {
@@ -748,6 +753,82 @@ app.delete('/api/boards/:id', needTeam, (req, res) => {
   broadcastIndex();
   res.json({ deleted });
 });
+
+// Every image in a project's boards, for picking a cover.
+app.get('/api/projects/:id/images', needTeam, (req, res) => {
+  const seen = new Set();
+  const out = [];
+  for (const b of store.boards.values()) {
+    if (b.projectId !== req.params.id) continue;
+    const add = (url, name) => { if (url && !seen.has(url)) { seen.add(url); out.push({ url, name: name || url.split('/').pop(), boardTitle: b.title }); } };
+    for (const it of Object.values(b.items)) {
+      if (it.type === 'image') add(it.url, it.fileName || it.caption);
+      if (it.type === 'link' && it.thumb) add(it.thumb, it.title);
+    }
+    for (const a of b.assets || []) if ((a.mime || '').startsWith('image/')) add(a.url, a.name);
+  }
+  res.json(out);
+});
+
+// ---------- recycle bin (team only) ----------
+const TRASH_DAYS = 30;
+
+app.get('/api/trash', needTeam, (_req, res) => {
+  const all = [...store.trash.values()];
+  const count = (root) => all.filter((b) => b.trashRoot === root).length;
+  const projectName = (id) => (store.projects.get(id) || store.trashedProjects.get(id))?.name || null;
+  const purgeAt = (at) => at + TRASH_DAYS * 24 * 3600 * 1000;
+  res.json({
+    days: TRASH_DAYS,
+    projects: [...store.trashedProjects.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, deletedAt: p.deletedAt, deletedBy: p.deletedBy || null, purgeAt: purgeAt(p.deletedAt), boards: count(`project:${p.id}`) })),
+    boards: all.filter((b) => b.trashRoot === b.id).map((b) => ({
+      id: b.id, title: b.title, deletedAt: b.deletedAt, deletedBy: b.deletedBy || null, purgeAt: purgeAt(b.deletedAt),
+      boards: count(b.id), projectName: b.projectId ? projectName(b.projectId) : null, cover: store.summary(b).cover,
+    })),
+  });
+});
+
+app.post('/api/trash/boards/:id/restore', needTeam, (req, res) => {
+  const back = store.restoreRoot(req.params.id);
+  if (!back.length) return res.status(404).json({ error: 'Not in the trash' });
+  // Put a card for it back on its parent board.
+  const root = back.find((b) => b.id === req.params.id);
+  const parent = root?.parentId ? store.get(root.parentId) : null;
+  if (parent && !Object.values(parent.items).some((i) => i.type === 'board' && i.boardId === root.id)) {
+    const items = Object.values(parent.items);
+    const z = Math.max(0, ...items.map((i) => i.z || 0)) + 1;
+    const y = items.length ? Math.max(...items.map((i) => (i.y || 0))) + 260 : 100;
+    const result = store.applyPatch(parent.id, { upsertItems: [{ id: crypto.randomUUID(), type: 'board', boardId: root.id, x: 80, y, w: 180, z, createdAt: Date.now() }] });
+    broadcast(parent.id, { t: 'patch', boardId: parent.id, patch: result.patch, version: result.board.version });
+  }
+  broadcastIndex();
+  res.json({ ok: true, restored: back.map((b) => b.id) });
+});
+
+app.post('/api/trash/projects/:id/restore', needTeam, (req, res) => {
+  const back = store.restoreProject(req.params.id);
+  if (!back) return res.status(404).json({ error: 'Not in the trash' });
+  accessChanged();
+  res.json({ ok: true, restored: back.map((b) => b.id) });
+});
+
+app.delete('/api/trash/boards/:id', needTeam, (req, res) => {
+  if (![...store.trash.values()].some((b) => b.trashRoot === req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
+  store.purgeRoot(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/trash/projects/:id', needTeam, (req, res) => {
+  if (!store.purgeProject(req.params.id)) return res.status(404).json({ error: 'Not in the trash' });
+  res.json({ ok: true });
+});
+
+function emptyOldTrash() {
+  const n = store.purgeOld(TRASH_DAYS);
+  if (n) console.log(`Trash: permanently deleted ${n} item(s) older than ${TRASH_DAYS} days`);
+}
+setTimeout(emptyOldTrash, 45 * 1000).unref();
+setInterval(emptyOldTrash, 6 * 3600 * 1000).unref();
 
 // ---------- uploads ----------
 // Files are sent in chunks (≤ 16 MB each) so large videos get past proxy request limits
@@ -885,7 +966,7 @@ app.get('/uploads/:name', (req, res) => files.serve(req, res));
 async function runBackup() {
   try {
     store.flushAll();
-    const name = await files.backup({ at: new Date().toISOString(), projects: store.listProjects(), boards: [...store.boards.values()] });
+    const name = await files.backup({ at: new Date().toISOString(), projects: [...store.listProjects(), ...store.trashedProjects.values()], boards: [...store.boards.values(), ...store.trash.values()] });
     if (name) console.log(`Backup saved: ${name} (${files.mode})`);
   } catch (err) {
     console.error('Backup failed:', err.message);
