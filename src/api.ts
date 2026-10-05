@@ -101,6 +101,9 @@ export const api = {
   removeMember: (projectId: string, email: string) =>
     req<{ ok: boolean }>(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`, { method: 'DELETE' }),
   admin: () => req<AdminData>('/api/admin'),
+  adminMcp: () => req<{ url: string; warnings: string[]; connections: { email: string | null; name: string | null; clientId: string; clientName: string; since: number; lastUsed: number }[] }>('/api/admin/mcp'),
+  disconnectMcp: (email: string | null, client: string) =>
+    req<{ ok: boolean }>(`/api/admin/mcp/connections?email=${encodeURIComponent(email || '')}&client=${encodeURIComponent(client)}`, { method: 'DELETE' }),
   setPersonRole: (email: string, role: GlobalRole) =>
     req<{ ok: boolean }>(`/api/admin/people/${encodeURIComponent(email)}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   removePerson: (email: string) => req<{ ok: boolean }>(`/api/admin/people/${encodeURIComponent(email)}`, { method: 'DELETE' }),

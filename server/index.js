@@ -17,6 +17,8 @@ import { Permissions, MEMBER_ROLES, atLeast, isOwnComment } from './permissions.
 import { Visitors } from './visitors.js';
 import { importMedia } from './importer.js';
 import { Templates } from './templates.js';
+import { OAuth, validRedirect } from './oauth.js';
+import { createMcp } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -206,6 +208,213 @@ app.post('/api/login', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- MCP connector (Claude and other MCP clients) ----------
+// The MCP endpoint and token/registration endpoints live on an address that isn't behind
+// Cloudflare Access (SHARE_URL, e.g. share.littleunusual.xyz), because Claude's servers call them.
+// The sign-in page (/oauth/authorize) lives on the main address (PUBLIC_URL), behind the normal
+// login, so the person approving is who they say they are.
+const oauth = new OAuth(DATA_DIR, visitors.secret);
+const origin = (u) => { try { return new URL(u).origin; } catch { return ''; } };
+const reqOrigin = (req) => `${req.protocol}://${req.get('host')}`;
+const mcpBase = (req) => origin(process.env.MCP_URL || '') || SHARE_URL || origin(PUBLIC_URL) || reqOrigin(req);
+const authBase = (req) => origin(PUBLIC_URL) || reqOrigin(req);
+const appUrl = () => origin(PUBLIC_URL) || SHARE_URL || '';
+
+const mcp = createMcp({
+  store, perms, files, tmpDir: TMP_DIR, maxUpload: MAX_UPLOAD_MB * 1024 * 1024, appUrl,
+  broadcastPatch: (boardId, patch, version) => broadcast(boardId, { t: 'patch', boardId, patch, version }),
+  broadcastThread: (boardId, thread) => {
+    const b = store.saveThread(boardId, thread);
+    broadcast(boardId, { t: 'patch', boardId, patch: { upsertThreads: [thread] }, version: b.version });
+    scheduleIndexBroadcast();
+  },
+  sendNotes: (boardId, patch) => sendNotes(boardId, patch),
+  indexChanged: () => scheduleIndexBroadcast(),
+});
+
+// Claude and other clients call these from servers and browsers.
+app.use(['/mcp', '/oauth/token', '/oauth/register', '/oauth/revoke', '/.well-known'], (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+app.use('/oauth', express.urlencoded({ extended: false, limit: '64kb' }));
+
+function protectedResource(req) {
+  return {
+    resource: `${mcpBase(req)}/mcp`,
+    authorization_servers: [mcpBase(req)],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['boards'],
+    resource_name: 'Reference Board',
+  };
+}
+function authServer(req) {
+  const base = mcpBase(req);
+  return {
+    issuer: base,
+    authorization_endpoint: `${authBase(req)}/oauth/authorize`,
+    token_endpoint: `${base}/oauth/token`,
+    registration_endpoint: `${base}/oauth/register`,
+    revocation_endpoint: `${base}/oauth/revoke`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['none'],
+    scopes_supported: ['boards'],
+    client_id_metadata_document_supported: true,
+  };
+}
+app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'], (req, res) => res.json(protectedResource(req)));
+app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp', '/.well-known/openid-configuration'], (req, res) => res.json(authServer(req)));
+
+app.post('/oauth/register', (req, res) => {
+  try {
+    res.status(201).json(oauth.register(req.body || {}));
+  } catch (err) {
+    res.status(400).json({ error: err.code || 'invalid_client_metadata', error_description: err.message });
+  }
+});
+
+app.post('/oauth/token', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    res.json(oauth.exchange(req.body || {}));
+  } catch (err) {
+    res.status(400).json({ error: err.code || 'invalid_request', error_description: err.message });
+  }
+});
+
+app.post('/oauth/revoke', (req, res) => {
+  oauth.revoke(req.body?.token);
+  res.status(200).end();
+});
+
+/** The consent page (and its error pages), in the app's look. */
+function consentPage(res, status, title, body) {
+  res.status(status).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} · Reference Board</title><link rel="icon" href="/favicon.svg">
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--text:#1f2330;--muted:#6b7180;--border:#e3e6eb;--accent:#6d4aff;--soft:#efeaff}
+@media (prefers-color-scheme:dark){:root{--bg:#15171c;--panel:#20232a;--text:#e8eaf0;--muted:#a0a6b3;--border:#333844;--accent:#8b6dff;--soft:#2c2648}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.card{width:100%;max-width:440px;background:var(--panel);border-radius:14px;padding:28px;box-shadow:0 8px 28px rgba(20,24,36,.16)}
+h1{font-size:20px;margin:12px 0 6px}p{color:var(--muted);margin:0 0 12px}ul{margin:0 0 16px;padding-left:20px;color:var(--muted)}b{color:var(--text)}
+.who{display:flex;align-items:center;gap:10px;background:var(--soft);border-radius:10px;padding:10px 12px;margin:14px 0}
+.row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}button,a.btn{font:inherit;font-weight:600;border:0;border-radius:8px;padding:9px 16px;cursor:pointer;text-decoration:none}
+.primary{background:var(--accent);color:#fff}.secondary{background:var(--border);color:var(--text)}small{color:var(--muted);display:block;margin-top:14px;font-size:12px}
+</style></head><body><div class="card"><img src="/favicon.svg" width="36" height="36" alt="">${body}</div></body></html>`);
+}
+
+const authParams = (src) => ({
+  response_type: String(src.response_type || ''), client_id: String(src.client_id || ''), redirect_uri: String(src.redirect_uri || ''),
+  code_challenge: String(src.code_challenge || ''), code_challenge_method: String(src.code_challenge_method || ''),
+  state: src.state === undefined ? undefined : String(src.state), scope: String(src.scope || 'boards'), resource: String(src.resource || ''),
+});
+
+/** Validate an authorization request. Returns { client, params } or sends an error page. */
+async function checkAuthorize(req, res, src) {
+  const params = authParams(src);
+  const client = await oauth.client(params.client_id);
+  if (!client) { consentPage(res, 400, 'Unknown app', '<h1>Unknown app</h1><p>This app isn’t registered with Reference Board. Try connecting it again.</p>'); return null; }
+  if (!client.redirect_uris.includes(params.redirect_uri) || !validRedirect(params.redirect_uri)) {
+    consentPage(res, 400, 'Invalid request', '<h1>Invalid request</h1><p>The app sent a return address it didn’t register.</p>');
+    return null;
+  }
+  const back = (error, description) => {
+    const u = new URL(params.redirect_uri);
+    u.searchParams.set('error', error);
+    if (description) u.searchParams.set('error_description', description);
+    if (params.state !== undefined) u.searchParams.set('state', params.state);
+    res.redirect(302, u.href);
+    return null;
+  };
+  if (params.response_type !== 'code') return back('unsupported_response_type');
+  if (params.code_challenge_method !== 'S256' || !/^[\w-]{43,128}$/.test(params.code_challenge)) return back('invalid_request', 'PKCE with S256 is required');
+  if (params.resource && params.resource.replace(/\/$/, '') !== `${mcpBase(req)}/mcp`) return back('invalid_target', 'Unknown resource');
+  return { client, params };
+}
+
+app.get('/oauth/authorize', async (req, res) => {
+  const member = await identifyMember(req);
+  if (!member) {
+    // Arrived on an address without sign-in (e.g. the share host): continue on the main address.
+    const main = origin(PUBLIC_URL);
+    if (main && main !== reqOrigin(req)) return res.redirect(302, `${main}${req.originalUrl}`);
+    return consentPage(res, 401, 'Sign in', `<h1>Sign in to Reference Board first</h1><p>Open Reference Board, sign in, then connect the app again.</p><div class="row"><a class="btn primary" href="/">Open Reference Board</a></div>`);
+  }
+  const ok = await checkAuthorize(req, res, req.query);
+  if (!ok) return;
+  const { client, params } = ok;
+  const who = member.email ? `${esc(member.name)} <span style="color:var(--muted)">(${esc(member.email)})</span>` : 'the Reference Board team';
+  const hidden = Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join('');
+  const csrf = oauth.csrf(member.email || 'team', params);
+  consentPage(res, 200, 'Connect an app', `<h1>Connect ${esc(client.client_name)} to Reference Board?</h1>
+<div class="who">Signed in as <b>${who}</b></div>
+<p>${esc(client.client_name)} will be able to, as you:</p>
+<ul><li>see the projects and boards you have access to</li><li>add, change and arrange cards, and comment, wherever you can</li></ul>
+<p>It can’t do anything you can’t do yourself, and an admin can disconnect it at any time.</p>
+<form method="post" action="/oauth/authorize">${hidden}<input type="hidden" name="csrf" value="${csrf}">
+<div class="row"><button class="secondary" name="decision" value="deny">Cancel</button><button class="primary" name="decision" value="allow">Allow</button></div></form>
+<small>After you allow it, you’ll return to ${esc(new URL(params.redirect_uri).host)}.</small>`);
+});
+
+app.post('/oauth/authorize', async (req, res) => {
+  const member = await identifyMember(req);
+  if (!member) return consentPage(res, 401, 'Sign in', '<h1>Your sign-in expired</h1><p>Sign in to Reference Board, then connect the app again.</p>');
+  const ok = await checkAuthorize(req, res, req.body || {});
+  if (!ok) return;
+  const { params } = ok;
+  const expected = oauth.csrf(member.email || 'team', params);
+  if (String(req.body?.csrf || '') !== expected) return consentPage(res, 400, 'Expired', '<h1>This page expired</h1><p>Go back to the app and connect again.</p>');
+  const u = new URL(params.redirect_uri);
+  if (params.state !== undefined) u.searchParams.set('state', params.state);
+  u.searchParams.set('iss', mcpBase(req));
+  if (req.body.decision !== 'allow') {
+    u.searchParams.set('error', 'access_denied');
+    return res.redirect(302, u.href);
+  }
+  const code = oauth.issueCode({
+    clientId: params.client_id, redirectUri: params.redirect_uri, codeChallenge: params.code_challenge,
+    resource: `${mcpBase(req)}/mcp`, scope: 'boards', person: { email: member.email || null, name: member.name || 'Team' },
+  });
+  u.searchParams.set('code', code);
+  res.redirect(302, u.href);
+});
+
+/** The person a bearer token acts for, with their current role and name. */
+function mcpUser(t) {
+  if (!t.email) return { anon: true, role: 'team', name: t.name || 'Team' };
+  const u = users.touch(t.email);
+  return { email: u.email, name: u.name, role: users.roleOf(u.email) };
+}
+
+app.post('/mcp', async (req, res) => {
+  const bearer = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1];
+  const t = oauth.check(bearer);
+  if (!t || (t.resource && t.resource !== `${mcpBase(req)}/mcp`)) {
+    res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${mcpBase(req)}/.well-known/oauth-protected-resource", error="invalid_token"`);
+    return res.status(401).json({ error: 'invalid_token', error_description: 'Connect Reference Board again' });
+  }
+  const user = mcpUser(t);
+  const via = `${user.name} (via ${oauth.clients[t.clientId]?.client_name || 'an app'})`;
+  const body = req.body;
+  const batch = Array.isArray(body);
+  const replies = [];
+  for (const msg of batch ? body : [body]) {
+    const r = await mcp.handle(msg, user, via);
+    if (r) replies.push(r);
+  }
+  if (!replies.length) return res.status(202).end();
+  res.json(batch ? replies : replies[0]);
+});
+// No server-to-client stream: everything is request/response.
+app.get('/mcp', (_req, res) => res.status(405).set('Allow', 'POST').end());
+app.delete('/mcp', (_req, res) => res.status(405).set('Allow', 'POST').end());
+
 app.use(['/api', '/uploads'], async (req, res, next) => {
   const user = await identify(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
@@ -227,6 +436,7 @@ app.patch('/api/me', (req, res) => {
   res.json({ email: u.email, name: u.name });
 });
 
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const isEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const needTeam = (req, res, next) => (perms.isTeam(req.user) ? next() : res.status(403).json({ error: 'Only the core team can do that' }));
 const needAdmin = (req, res, next) => (perms.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Admins only' }));
@@ -438,6 +648,20 @@ app.get('/api/admin', needAdmin, (_req, res) => {
   });
 });
 
+// The Claude connector: its address, whether it's set up, and who has connected which app.
+app.get('/api/admin/mcp', needAdmin, (req, res) => {
+  const warnings = [];
+  if (AUTH_MODE === 'cloudflare' && !SHARE_URL && !process.env.MCP_URL) warnings.push('Set SHARE_URL (an address not behind Cloudflare Access) so Claude can reach the connector.');
+  if (AUTH_MODE === 'cloudflare' && !PUBLIC_URL) warnings.push('Set PUBLIC_URL (the main address) so people can sign in when connecting.');
+  res.json({ url: `${mcpBase(req)}/mcp`, warnings, connections: oauth.connections() });
+});
+
+app.delete('/api/admin/mcp/connections', needAdmin, (req, res) => {
+  const email = String(req.query.email || '') || null;
+  const n = oauth.revokePerson(email, String(req.query.client || '') || null);
+  res.json({ ok: true, revoked: n });
+});
+
 app.patch('/api/admin/people/:email', needAdmin, (req, res) => {
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
   if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email' });
@@ -459,6 +683,7 @@ app.delete('/api/admin/people/:email', needAdmin, (req, res) => {
   try {
     store.removeMemberEverywhere(email);
     if (users.get(email)) users.remove(email);
+    oauth.revokePerson(email);
     accessChanged();
     res.json({ ok: true });
   } catch (err) {
