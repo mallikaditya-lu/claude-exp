@@ -525,6 +525,24 @@ function boardAssets(board) {
   return [...out.values()].map((a) => ({ ...a, onBoard: used.has(a.url), boardId: board.id, boardTitle: board.title }));
 }
 
+// Rename a file: its entry in the board's assets and every card on that board that shows it.
+app.patch('/api/boards/:id/assets', (req, res) => {
+  const board = store.get(req.params.id);
+  if (!board || !perms.can(req.user, board, 'edit')) return res.status(404).json({ error: 'Board not found' });
+  const url = String(req.body?.url || '');
+  const name = String(req.body?.name || '').trim().replace(/[\\/]/g, '-').slice(0, 200);
+  if (!url || !name) return res.status(400).json({ error: 'A name is needed' });
+  const asset = (board.assets || []).find((a) => a.url === url);
+  if (asset) { asset.name = name; store.persist(board.id); }
+  const cards = Object.values(board.items).filter((it) => it.url === url && it.fileName !== undefined);
+  if (cards.length) {
+    const result = store.applyPatch(board.id, { upsertItems: cards.map((it) => ({ ...it, fileName: name })) });
+    broadcast(board.id, { t: 'patch', boardId: board.id, patch: result.patch, version: result.board.version });
+  }
+  if (!asset && !cards.length) return res.status(404).json({ error: 'File not found on this board' });
+  res.json({ ok: true, name });
+});
+
 app.get('/api/boards/:id/assets', (req, res) => {
   const board = store.get(req.params.id);
   if (!board || !perms.can(req.user, board, 'edit')) return res.status(404).json({ error: 'Board not found' });

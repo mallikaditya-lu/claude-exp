@@ -138,6 +138,8 @@ export const api = {
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
+  renameAsset: (boardId: string, url: string, name: string) =>
+    req<{ ok: boolean; name: string }>(`/api/boards/${boardId}/assets`, { method: 'PATCH', body: JSON.stringify({ url, name }) }),
   assets: (boardId: string, scope: 'board' | 'project') => req<Asset[]>(`/api/boards/${boardId}/assets?scope=${scope}`),
   notes: {
     add: (boardId: string, text = '') => req<BoardNote>(`/api/boards/${boardId}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),

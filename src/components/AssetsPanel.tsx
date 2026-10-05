@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Asset } from '../api';
 import { formatBytes, timeAgo } from '../lib';
-import { IconFile, IconSearch, IconX } from './icons';
+import { IconEdit, IconFile, IconSearch, IconX } from './icons';
 
 // Everything uploaded or imported to this board (or its whole project), kept even after the card
 // is deleted, so a file can be found and reused instead of uploaded again.
@@ -15,6 +15,14 @@ export function assetKind(a: Pick<Asset, 'mime' | 'name'>): Exclude<Kind, 'all'>
   if (a.mime.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(a.name)) return 'video';
   if (a.mime.startsWith('audio/') || /\.(mp3|wav|aac|m4a|ogg|flac)$/i.test(a.name)) return 'audio';
   return 'file';
+}
+
+/** Ask for a new file name, keeping the extension if it was left off. */
+export function askName(current: string) {
+  const input = window.prompt('Rename file', current)?.trim();
+  if (!input || input === current) return null;
+  const ext = current.match(/\.[a-z0-9]{1,6}$/i)?.[0] || '';
+  return ext && !/\.[a-z0-9]{1,6}$/i.test(input) ? `${input}${ext}` : input;
 }
 
 interface Props {
@@ -88,7 +96,21 @@ export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
                 {(k === 'audio' || k === 'file') && <IconFile size={26} />}
                 {!a.onBoard && a.boardId === boardId && <span className="asset-badge" title="Not on the board any more">removed</span>}
               </div>
-              <div className="asset-name">{a.name}</div>
+              <div className="asset-name-row">
+                <div className="asset-name">{a.name}</div>
+                <button
+                  className="icon-btn asset-rename"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const name = askName(a.name);
+                    if (!name) return;
+                    api.renameAsset(a.boardId, a.url, name).then(() => load()).catch((err) => setError(err.message));
+                  }}
+                >
+                  <IconEdit size={12} />
+                </button>
+              </div>
               <div className="asset-meta">{a.size ? formatBytes(a.size) : k}{scope === 'project' ? ` · ${a.boardTitle}` : ''}</div>
             </div>
           );

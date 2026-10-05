@@ -9,7 +9,7 @@ import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
 import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
-import { ASSET_MIME, AssetsPanel, assetKind } from './AssetsPanel';
+import { ASSET_MIME, AssetsPanel, askName, assetKind } from './AssetsPanel';
 import { NOTE_MIME } from './NotesPanel';
 import type { Asset } from '../api';
 import {
@@ -46,6 +46,7 @@ const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'
 const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
 const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 60, video: 120, link: 160, board: 120 };
 const TEXT_SIZED: ItemType[] = ['note', 'heading', 'todo', 'table'];
+const FILE_TYPES: ItemType[] = ['image', 'video', 'audio', 'file'];
 const TEXT_STYLES: [string, '' | 'h1' | 'h2' | 'h3' | 'label'][] = [['Text', ''], ['H1', 'h1'], ['H2', 'h2'], ['H3', 'h3'], ['Label', 'label']];
 
 function htmlToPlain(html = '') {
@@ -1570,6 +1571,18 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 )}
                 {single?.type === 'board' && (
                   <button className="icon-btn" title="Rename" onClick={() => setEditingId(single.id)}><IconEdit size={16} /></button>
+                )}
+                {single && FILE_TYPES.includes(single.type) && single.fileName && single.url?.startsWith('/uploads/') && (
+                  <button
+                    className="text-btn"
+                    title="Rename this file (also in Assets)"
+                    onClick={() => {
+                      const name = askName(single.fileName!);
+                      if (name) api.renameAsset(board.id, single.url!, name).catch((err) => notify(err.message));
+                    }}
+                  >
+                    Rename
+                  </button>
                 )}
                 {single?.url && (
                   <a className="icon-btn" title="Open in new tab" href={single.url} target="_blank" rel="noopener noreferrer"><IconExternal size={16} /></a>
