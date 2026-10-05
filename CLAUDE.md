@@ -37,6 +37,7 @@ Read README.md for features and configuration. This file covers conventions and 
    Comments: Figma-style pinned threads in `board.threads` (src/components/Comments.tsx), saved through `/api/boards/:id/threads…` (one request per change, broadcast as `upsertThreads`/`removeThreads` patches), never through card patches. Old `type: 'comment'` cards are converted on load (store.js migrateComments).
    Groups are stored as `type: 'column'` with `cols` (0 = auto, unset = 1 for old columns); grid layout in Containers.tsx.
    Board side data, all outside card patches: `board.assets` (every upload/import, `/api/boards/:id/assets`), `board.notes` (editors only; never sent to commenters/viewers: GET strips it and `sendNotes` filters the WebSocket), templates in `templates.json` (team only).
+   Trash: deleted boards/projects move to `store.trash` / `store.trashedProjects` (not `store.boards`/`projects`), so normal lookups ignore them; `/api/trash…` restores or purges; purged after 30 days. Covers: `project.cover`, `board.cover`. Text styles: note `textStyle` h1–h3; Label = `type: 'heading'`. Toolbar is a dock (`useDockPosition`, localStorage `rb-dock`). Drags end on the first buttonless pointermove (main.tsx) so iframes can't leave cards stuck.
    Web media import: `/api/import-url` (server/importer.js). Tests fetch from localhost with `TEST_ALLOW_PRIVATE_FETCH=1`; never set it in production. Next: version history, search.
 5. Later: video compression and thumbnails (ffmpeg), version history, search
 
