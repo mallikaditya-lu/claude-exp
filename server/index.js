@@ -19,6 +19,7 @@ import { importMedia } from './importer.js';
 import { Templates } from './templates.js';
 import { OAuth, validRedirect } from './oauth.js';
 import { createMcp } from './mcp.js';
+import { Thumbs } from './thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -221,7 +222,7 @@ const authBase = (req) => origin(PUBLIC_URL) || reqOrigin(req);
 const appUrl = () => origin(PUBLIC_URL) || SHARE_URL || '';
 
 const mcp = createMcp({
-  store, perms, files, tmpDir: TMP_DIR, maxUpload: MAX_UPLOAD_MB * 1024 * 1024, appUrl,
+  store, perms, files, thumbs: new Thumbs(DATA_DIR), tmpDir: TMP_DIR, maxUpload: MAX_UPLOAD_MB * 1024 * 1024, appUrl,
   broadcastPatch: (boardId, patch, version) => broadcast(boardId, { t: 'patch', boardId, patch, version }),
   broadcastThread: (boardId, thread) => {
     const b = store.saveThread(boardId, thread);

@@ -18,6 +18,9 @@
   "dependencies": {
     "dompurify": "^3.4.16",
     "express": "^5.2.1",
+    "jpeg-js": "^0.4.4",
+    "omggif": "^1.0.10",
+    "pngjs": "^7.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "ws": "^8.22.0"

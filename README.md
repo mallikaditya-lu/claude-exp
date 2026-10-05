@@ -144,7 +144,7 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 Claude (claude.ai, the desktop app, Claude Code) and other apps that support MCP connectors can read and build boards. Each person connects their own Claude and it works **as them**: the same projects, boards and permissions they have in the app (a commenter's Claude can comment but not edit; a guest's Claude only sees their boards).
 
 - **Connect:** in Claude, open *Settings → Connectors → Add custom connector* and paste the connector address shown on the Admin page (e.g. `https://share.littleunusual.xyz/mcp`). Claude opens the Reference Board sign-in (the usual Cloudflare login) and a consent page; click **Allow**. On a Team or Enterprise plan an owner can add it once for everyone. Claude Code: `claude mcp add --transport http reference-board https://share.littleunusual.xyz/mcp`.
-- **What Claude can do:** list projects and boards, search, read a board (cards, lines, comments, sub-boards, notes for editors), create boards, add cards (text, headings, labels, links/embeds, images and GIFs from the web, videos, to-dos, tables, groups with cards inside), update, arrange and connect cards, delete cards (Claude asks first), comment and resolve, and add board notes. It can't delete boards or projects, or change sharing.
+- **What Claude can do:** list projects and boards, search, read a board (cards, lines, comments, sub-boards, notes for editors), **look at a board's images** (`view_images`: small previews of image and GIF cards and link preview pictures, 8 per call, so it can recognise what they show even when the files have meaningless names), create boards, add cards (text, headings, labels, links/embeds, images and GIFs from the web, videos, to-dos, tables, groups with cards inside), update, arrange and connect cards, delete cards (Claude asks first), comment and resolve, and add board notes. It can't delete boards or projects, or change sharing.
 - **Live:** changes appear for everyone with the board open, signed "Name (via Claude)".
 - **Admin:** the Admin page shows the connector address, setup warnings, and who has connected which app, with **Disconnect**. Removing a person also disconnects their apps.
 - **Setup:** the connector lives at `SHARE_URL` (or `MCP_URL`), which must not be behind Cloudflare Access, because Claude's servers call it. Sign-in happens on `PUBLIC_URL`, behind Access. Both must be set in Cloudflare mode.
@@ -183,6 +183,7 @@ server/
   templates.js  saved templates (templates.json)
   oauth.js      OAuth 2.1 for the Claude connector (registration, consent, tokens)
   mcp.js        the MCP server: tools Claude uses to read and build boards
+  thumbs.js     small JPEG previews of board images for the connector (pure JS, cached in DATA_DIR/thumbs)
   permissions.js who can view/comment/edit which board; enforced in index.js
   seed.js       first-run example board
   demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)
