@@ -7,7 +7,7 @@ import { Canvas } from './Canvas';
 import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
 import { NotesPanel } from './NotesPanel';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo } from './icons';
+import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo, IconX } from './icons';
 
 interface Props {
   boardId: string;
@@ -29,6 +29,7 @@ const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…
 
 export function BoardView({ boardId, boards, projects, me, myEmail, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
   const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
+  const [guestShare, setGuestShare] = useState(false);
   const [comments, setComments] = useCommentUi();
   const actions = useCommentActions(boardId, applyServerPatch, notify);
   const identity: Identity = useMemo(() => ({ name: me, email: myEmail, visitor: false }), [me, myEmail]);
@@ -168,17 +169,38 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
         <button
           className="btn primary"
           onClick={() => {
-            // The team shares the board (invites and links); everyone else copies the address.
-            if (isTeam) { onShare(boardId); return; }
-            navigator.clipboard?.writeText(location.href).then(
-              () => notify('Board link copied'),
-              () => notify(location.href),
-            );
+            // The team shares the board (invites and links); everyone else is told why they can't.
+            if (isTeam) onShare(boardId);
+            else setGuestShare(true);
           }}
         >
           <IconShare size={15} /> Share
         </button>
       </header>
+      {guestShare && (
+        <div className="modal-backdrop" onPointerDown={() => setGuestShare(false)}>
+          <div className="modal share-dialog" role="dialog" aria-label="Share board" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Share “{board?.title || 'this board'}”</h2>
+              <button className="icon-btn" onClick={() => setGuestShare(false)} aria-label="Close"><IconX size={16} /></button>
+            </div>
+            <p className="guest-share-text">
+              Inviting people and share links are for the Little Unusual core team.
+              {myEmail ? <> You’re signed in as <b>{myEmail}</b>, which is a guest account.</> : null}
+              {' '}An admin can add you to the core team on the Admin page.
+            </p>
+            <div className="modal-foot">
+              <span className="share-foot-note">People who already have access can open this board with its link.</span>
+              <button
+                className="btn primary"
+                onClick={() => navigator.clipboard?.writeText(location.href).then(() => { notify('Board link copied'); setGuestShare(false); }, () => notify(location.href))}
+              >
+                Copy link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="board-body">
       <div
         className={`board-stage ${bg.dark ? 'theme-dark' : 'theme-light'}`}
