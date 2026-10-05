@@ -514,12 +514,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   }, [boards, change, getBoard, selConn]);
 
   /** Clone cards (and their column children and the lines between them) into this board. */
-  const insertClones = useCallback((srcItems: Item[], srcConns: Connection[], offset: { x: number; y: number }) => {
+  const insertClones = useCallback((srcItems: Item[], srcConns: Connection[], offset: { x: number; y: number }, copyBoards = false) => {
     const b = getBoard();
     if (!b) return;
     const idMap = new Map<string, string>();
     const src = new Map(srcItems.map((it) => [it.id, it]));
-    for (const it of srcItems) if (it.type !== 'board') idMap.set(it.id, uid());
+    // Board cards are only copied when asked (Alt-drag): the nested board is then copied on the server.
+    for (const it of srcItems) if (it.type !== 'board' || copyBoards) idMap.set(it.id, uid());
     let z = maxZ(b.items);
     const clones: Item[] = [];
     for (const it of srcItems) {
@@ -548,8 +549,16 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     }));
     const top = clones.filter((c) => !c.parentId).map((c) => c.id);
     setSelection(new Set(top));
+    if (copyBoards) {
+      for (const c of clones) {
+        if (c.type !== 'board' || !c.boardId) continue;
+        api.duplicateBoard(c.boardId, board.id)
+          .then((nb) => updateItem(c.id, { boardId: nb.id }))
+          .catch((err) => notify(err.message));
+      }
+    }
     return top;
-  }, [change, getBoard, me]);
+  }, [board.id, change, getBoard, me, notify, updateItem]);
 
   const collectSelection = useCallback(() => {
     const b = getBoard();
@@ -770,8 +779,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     if (!canEdit) return; // viewers and commenters can select and click, but not move things
 
     const b0 = getBoard()!;
-    const child = isInColumn(item, b0.items);
-    let ids = child ? [item.id] : [...sel].filter((id) => b0.items[id] && !isInColumn(b0.items[id], b0.items));
+    const inGroup = isInColumn(item, b0.items);
+    // Alt/Option-drag drags a copy and leaves the original where it was.
+    const dup = e.altKey;
+    const child = inGroup && !dup;
+    let ids = inGroup ? [item.id] : [...sel].filter((id) => b0.items[id] && !isInColumn(b0.items[id], b0.items));
     if (!ids.includes(item.id)) ids = [item.id];
     const start = toWorld(e.clientX, e.clientY);
     const sx = e.clientX;
@@ -787,6 +799,19 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
         moved = true;
         setDragging(true);
+        if (dup) {
+          const b = getBoard()!;
+          const all = new Set<string>();
+          for (const id of ids) { all.add(id); b.items[id]?.childIds?.forEach((c) => b.items[c] && all.add(c)); }
+          // A card copied out of a group starts as a free card where it is on screen.
+          const srcItems = [...all].map((id) => {
+            const it = b.items[id];
+            const r = rectsRef.current[id];
+            return ids.includes(id) && isInColumn(it, b.items) && r ? { ...it, parentId: null, x: r.x, y: r.y, w: Math.round(r.w) } : it;
+          });
+          const conns = Object.values(b.connections).filter((c) => all.has(c.from) && all.has(c.to));
+          ids = insertClones(srcItems, conns, { x: 0, y: 0 }, true) || ids;
+        }
         change((b) => {
           const next = { ...b.items };
           let z = maxZ(next);

@@ -3,7 +3,7 @@ import { api } from '../api';
 import { COLORS, color, timeAgo } from '../lib';
 import type { BoardSummary, Project } from '../types';
 import { CoverPicker } from './CoverPicker';
-import { IconBoard, IconChevron, IconFolder, IconImage, IconMore, IconPlus, IconSidebar, IconTrash, IconUsers } from './icons';
+import { IconBoard, IconChevron, IconCopy, IconFolder, IconImage, IconMore, IconPlus, IconSidebar, IconTrash, IconUsers } from './icons';
 
 export const ACCESS_LABEL = { manage: 'Full access', edit: 'Can edit', comment: 'Can comment', view: 'View only' } as const;
 
@@ -314,7 +314,7 @@ function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCove
   );
 }
 
-function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, isTeam, onCover }: Props & { board: BoardSummary; subCount: number; showProject: boolean; onCover: (t: CoverTarget) => void }) {
+function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, isTeam, onCover, notify }: Props & { board: BoardSummary; subCount: number; showProject: boolean; onCover: (t: CoverTarget) => void }) {
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const project = projects.find((p) => p.id === b.projectId);
@@ -363,6 +363,9 @@ function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenPr
                 <span className="project-dot is-none" /> No project
               </button>
               <div className="menu-sep" />
+              <button className="menu-item" onClick={() => { setMenu(false); api.duplicateBoard(b.id).then((c) => notify(`Copied as “${c.title}”`)).catch((err) => notify(err.message)); }}>
+                <IconCopy size={14} /> Duplicate board
+              </button>
               <button className="menu-item" onClick={() => { setMenu(false); onCover({ kind: 'board', id: b.id }); }}>
                 <IconImage size={14} /> Change cover…
               </button>

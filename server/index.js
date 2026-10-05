@@ -753,6 +753,19 @@ app.delete('/api/boards/:id/threads/:tid/comments/:cid', (req, res) => {
   sendThread(res, a.board.id, { ...a.thread, comments: a.thread.comments.filter((_, i) => i !== idx) });
 });
 
+// Copy a board (and the boards inside it): from a tile menu, or Alt-dragging a board card.
+app.post('/api/boards/:id/duplicate', (req, res) => {
+  const board = store.get(req.params.id);
+  if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
+  const parent = req.body?.parentId ? store.get(req.body.parentId) : null;
+  // Copying into a board needs edit access there; a new top-level board is for the team.
+  const allowed = parent ? perms.can(req.user, parent, 'edit') : perms.isTeam(req.user);
+  if (!allowed) return res.status(403).json({ error: 'You can’t copy boards here' });
+  const copy = store.duplicate(board.id, parent?.id || null);
+  broadcastIndex();
+  res.status(201).json(store.summary(copy));
+});
+
 app.delete('/api/boards/:id', needTeam, (req, res) => {
   const board = store.get(req.params.id);
   if (!board) return res.status(404).json({ error: 'Board not found' });

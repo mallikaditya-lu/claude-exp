@@ -194,6 +194,47 @@ export class Store {
     return board;
   }
 
+  /**
+   * Copy a board and every board nested in it. The copy goes under `parentId` (or the top level
+   * of the same project). Comments, notes, invites and share links are not copied.
+   */
+  duplicate(id, parentId = null) {
+    const src = this.boards.get(id);
+    if (!src) return null;
+    const ids = this.subtree(id);
+    const map = new Map(ids.map((old) => [old, crypto.randomUUID()]));
+    const now = Date.now();
+    const parent = parentId ? this.boards.get(parentId) : null;
+    for (const old of ids) {
+      const b = this.boards.get(old);
+      const copy = {
+        id: map.get(old),
+        title: old === id ? `${b.title} (copy)`.slice(0, 200) : b.title,
+        parentId: old === id ? (parent ? parent.id : null) : map.get(b.parentId) || null,
+        projectId: old === id ? (parent ? parent.projectId || null : b.projectId || null) : null,
+        background: b.background || null,
+        cover: b.cover || null,
+        items: structuredClone(b.items),
+        connections: structuredClone(b.connections),
+        threads: {},
+        assets: structuredClone(b.assets || []),
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Board cards inside the copy point at the copied boards.
+      for (const it of Object.values(copy.items)) if (it.type === 'board' && map.has(it.boardId)) it.boardId = map.get(it.boardId);
+      this.boards.set(copy.id, copy);
+    }
+    const root = this.boards.get(map.get(id));
+    for (const nid of map.values()) {
+      const b = this.boards.get(nid);
+      if (nid !== root.id) b.projectId = root.projectId;
+      this.persist(nid);
+    }
+    return root;
+  }
+
   // ---------- recycle bin ----------
   /** Move boards to the trash. `root` is what restores them together (a board id, or "project:<id>"). */
   trashBoards(ids, root, by) {

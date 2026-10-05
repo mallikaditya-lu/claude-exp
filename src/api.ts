@@ -137,6 +137,8 @@ export const api = {
   },
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
+  duplicateBoard: (id: string, parentId: string | null = null) =>
+    req<BoardSummary>(`/api/boards/${id}/duplicate`, { method: 'POST', body: JSON.stringify({ parentId }) }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
   renameAsset: (boardId: string, url: string, name: string) =>
     req<{ ok: boolean; name: string }>(`/api/boards/${boardId}/assets`, { method: 'PATCH', body: JSON.stringify({ url, name }) }),
