@@ -66,6 +66,8 @@ export interface Item {
   cols?: number;
   /** Text size in px for text cards (notes, headings, to-dos, tables). Unset = 14. */
   fontSize?: number;
+  /** Text cards: heading levels (unset = normal text). The coloured 'heading' type is the Label style. */
+  textStyle?: 'h1' | 'h2' | 'h3';
   comments?: CommentEntry[];
   createdBy?: string;
   createdAt?: number;
@@ -142,6 +144,8 @@ export interface Project {
   name: string;
   color: string;
   createdAt: number;
+  /** Chosen cover image (otherwise the project's board covers are shown). */
+  cover?: string | null;
   /** What the current person can do in this project. */
   myLevel?: Access | null;
   /** Only sent to the core team. */
@@ -168,6 +172,7 @@ export interface Patch {
   title?: string;
   background?: string | null;
   projectId?: string | null;
+  cover?: string | null;
   upsertItems?: Item[];
   removeItems?: string[];
   upsertConnections?: Connection[];

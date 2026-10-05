@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { COLORS, color, timeAgo } from '../lib';
 import type { BoardSummary, Project } from '../types';
-import { IconBoard, IconChevron, IconFolder, IconMore, IconPlus, IconSidebar, IconTrash, IconUsers } from './icons';
+import { CoverPicker } from './CoverPicker';
+import { IconBoard, IconChevron, IconCopy, IconFolder, IconImage, IconMore, IconPlus, IconSidebar, IconTrash, IconUsers } from './icons';
 
 export const ACCESS_LABEL = { manage: 'Full access', edit: 'Can edit', comment: 'Can comment', view: 'View only' } as const;
 
@@ -25,7 +26,33 @@ interface Props {
   toggleSidebar: () => void;
 }
 
+type CoverTarget = { kind: 'project' | 'board'; id: string } | null;
+
 export function Home(props: Props) {
+  const [coverFor, setCoverFor] = useState<CoverTarget>(null);
+  return (
+    <>
+      <HomeInner {...props} onCover={setCoverFor} />
+      {coverFor && (() => {
+        const p = coverFor.kind === 'project' ? props.projects.find((x) => x.id === coverFor.id) : null;
+        const b = coverFor.kind === 'board' ? props.boards.find((x) => x.id === coverFor.id) : null;
+        if (!p && !b) return null;
+        return (
+          <CoverPicker
+            title={p ? p.name : b!.title}
+            projectId={p ? p.id : b!.projectId}
+            current={p ? p.cover || null : b!.cover}
+            notify={props.notify}
+            onClose={() => setCoverFor(null)}
+            onPick={(url) => (p ? api.updateProject(p.id, { cover: url }) : api.patchBoard(b!.id, { cover: url }))}
+          />
+        );
+      })()}
+    </>
+  );
+}
+
+function HomeInner(props: Props & { onCover: (t: CoverTarget) => void }) {
   const { boards, projects, projectId, me, onOpenProject, onCreate, onCreateProject, sidebarOpen, toggleSidebar, isTeam, onShare } = props;
   const project = projectId ? projects.find((p) => p.id === projectId) : null;
   // Top level = boards whose parent this person can't see (for guests invited to a sub-board, that board).
@@ -36,6 +63,11 @@ export function Home(props: Props) {
   const tile = (b: BoardSummary) => (
     <BoardTile key={b.id} board={b} {...props} subCount={nestedCount(b.id)} showProject={!projectId} />
   );
+  const deleteProject = async (p: Project) => {
+    if (!window.confirm(`Move the project “${p.name}” and its boards to the trash? You can restore it from Trash for 30 days.`)) return;
+    await api.deleteProject(p.id).then(() => props.notify(`“${p.name}” moved to the trash`)).catch((err) => props.notify(err.message));
+    if (projectId === p.id) onOpenProject(null);
+  };
 
   if (projectId && !project) {
     return (
@@ -75,7 +107,7 @@ export function Home(props: Props) {
           <span className="crumb-current">{project.name}</span>
         </Topbar>
         <div className="home-body">
-          <ProjectHeader project={project} count={inProject.length} {...props} />
+          <ProjectHeader project={project} count={inProject.length} {...props} onDeleteProject={() => deleteProject(project)} />
           <div className="board-grid">
             {inProject.map(tile)}
             {canCreate && (
@@ -136,10 +168,23 @@ export function Home(props: Props) {
                 onKeyDown={(e) => e.key === 'Enter' && onOpenProject(p.id)}
               >
                 <div className="project-cover">
-                  {covers.length
-                    ? covers.map((c) => <img key={c} src={c} alt="" loading="lazy" />)
-                    : <IconFolder size={36} />}
+                  {p.cover
+                    ? <img src={p.cover} alt="" loading="lazy" />
+                    : covers.length
+                      ? covers.map((c) => <img key={c} src={c} alt="" loading="lazy" />)
+                      : <IconFolder size={36} />}
                 </div>
+                {isTeam && (
+                  <TileMenu label="Project options">
+                    {(close) => (
+                      <>
+                        <button className="menu-item" onClick={() => { close(); props.onCover({ kind: 'project', id: p.id }); }}><IconImage size={14} /> Change cover…</button>
+                        <div className="menu-sep" />
+                        <button className="menu-item danger" onClick={() => { close(); deleteProject(p); }}><IconTrash size={14} /> Delete project</button>
+                      </>
+                    )}
+                  </TileMenu>
+                )}
                 <div className="board-tile-body">
                   <div className="board-tile-title">{p.name}</div>
                   <div className="board-tile-meta">
@@ -203,7 +248,25 @@ function Topbar({ children, actions, sidebarOpen, toggleSidebar }: {
   );
 }
 
-function ProjectHeader({ project, count, onOpenProject, notify, isTeam }: Props & { project: Project; count: number }) {
+/** The ⋯ menu on a tile. */
+function TileMenu({ label, children }: { label: string; children: (close: () => void) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [open]);
+  return (
+    <div className="tile-menu" ref={ref} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      <button className="icon-btn tile-menu-btn" title={label} onClick={() => setOpen((o) => !o)}><IconMore size={16} /></button>
+      {open && <div className="menu">{children(() => setOpen(false))}</div>}
+    </div>
+  );
+}
+
+function ProjectHeader({ project, count, notify, isTeam, onDeleteProject, onCover }: Props & { project: Project; count: number; onDeleteProject: () => void; onCover: (t: CoverTarget) => void }) {
   const [name, setName] = useState(project.name);
   useEffect(() => setName(project.name), [project.name]);
   const save = (fields: Partial<Project>) => api.updateProject(project.id, fields).catch((err) => notify(err.message));
@@ -238,15 +301,12 @@ function ProjectHeader({ project, count, onOpenProject, notify, isTeam }: Props 
         ))}
       </div>}
       {isTeam && (
-        <button
-          className="icon-btn danger"
-          title="Delete project (boards are kept)"
-          onClick={async () => {
-            if (!window.confirm(`Delete the project “${project.name}”? Its boards are kept and moved to “Boards without a project”.`)) return;
-            await api.deleteProject(project.id).catch((err) => notify(err.message));
-            onOpenProject(null);
-          }}
-        >
+        <button className="btn" title="Choose this project’s cover image" onClick={() => onCover({ kind: 'project', id: project.id })}>
+          <IconImage size={15} /> Cover
+        </button>
+      )}
+      {isTeam && (
+        <button className="icon-btn danger" title="Delete project (to the trash, restorable for 30 days)" onClick={onDeleteProject}>
           <IconTrash size={16} />
         </button>
       )}
@@ -254,7 +314,7 @@ function ProjectHeader({ project, count, onOpenProject, notify, isTeam }: Props 
   );
 }
 
-function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, isTeam }: Props & { board: BoardSummary; subCount: number; showProject: boolean }) {
+function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenProject, onMove, onDelete, isTeam, onCover, notify }: Props & { board: BoardSummary; subCount: number; showProject: boolean; onCover: (t: CoverTarget) => void }) {
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const project = projects.find((p) => p.id === b.projectId);
@@ -303,6 +363,12 @@ function BoardTile({ board: b, projects, subCount, showProject, onOpen, onOpenPr
                 <span className="project-dot is-none" /> No project
               </button>
               <div className="menu-sep" />
+              <button className="menu-item" onClick={() => { setMenu(false); api.duplicateBoard(b.id).then((c) => notify(`Copied as “${c.title}”`)).catch((err) => notify(err.message)); }}>
+                <IconCopy size={14} /> Duplicate board
+              </button>
+              <button className="menu-item" onClick={() => { setMenu(false); onCover({ kind: 'board', id: b.id }); }}>
+                <IconImage size={14} /> Change cover…
+              </button>
               <button className="menu-item danger" onClick={() => { setMenu(false); onDelete(b.id); }}>
                 <IconTrash size={14} /> Delete board
               </button>

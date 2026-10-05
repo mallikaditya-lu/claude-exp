@@ -72,6 +72,12 @@ export interface AdminData {
   stats: { projects: number; boards: number; files: number; storage: string; activeLast7Days: number };
 }
 
+export interface TrashData {
+  days: number;
+  projects: { id: string; name: string; color: string; deletedAt: number; deletedBy: string | null; purgeAt: number; boards: number }[];
+  boards: { id: string; title: string; deletedAt: number; deletedBy: string | null; purgeAt: number; boards: number; projectName: string | null; cover: string | null }[];
+}
+
 export interface UploadResult { url: string; name: string; size: number; mime: string }
 export interface Asset { url: string; name: string; mime: string; size: number; at: number; by: string | null; onBoard: boolean; boardId: string; boardTitle: string }
 export interface LinkMeta { url: string; title: string; description: string; image: string; siteName: string }
@@ -87,7 +93,7 @@ export const api = {
   listProjects: () => req<Project[]>('/api/projects'),
   createProject: (name: string, color = 'purple') =>
     req<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ name, color }) }),
-  updateProject: (id: string, fields: Partial<Pick<Project, 'name' | 'color'>>) =>
+  updateProject: (id: string, fields: Partial<Pick<Project, 'name' | 'color' | 'cover'>>) =>
     req<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   deleteProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   setMember: (projectId: string, email: string, role: MemberRole) =>
@@ -131,7 +137,11 @@ export const api = {
   },
   patchBoard: (id: string, patch: Patch, keepalive = false) =>
     req<{ version: number }>(`/api/boards/${id}/patch`, { method: 'POST', body: JSON.stringify(patch), keepalive }),
+  duplicateBoard: (id: string, parentId: string | null = null) =>
+    req<BoardSummary>(`/api/boards/${id}/duplicate`, { method: 'POST', body: JSON.stringify({ parentId }) }),
   deleteBoard: (id: string) => req<{ deleted: string[] }>(`/api/boards/${id}`, { method: 'DELETE' }),
+  renameAsset: (boardId: string, url: string, name: string) =>
+    req<{ ok: boolean; name: string }>(`/api/boards/${boardId}/assets`, { method: 'PATCH', body: JSON.stringify({ url, name }) }),
   assets: (boardId: string, scope: 'board' | 'project') => req<Asset[]>(`/api/boards/${boardId}/assets?scope=${scope}`),
   notes: {
     add: (boardId: string, text = '') => req<BoardNote>(`/api/boards/${boardId}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),
@@ -139,6 +149,12 @@ export const api = {
       req<BoardNote>(`/api/boards/${boardId}/notes/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
     remove: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/notes/${id}`, { method: 'DELETE' }),
   },
+  projectImages: (id: string) => req<{ url: string; name: string; boardTitle: string }[]>(`/api/projects/${id}/images`),
+  trash: () => req<TrashData>('/api/trash'),
+  restoreBoard: (id: string) => req<{ ok: boolean }>(`/api/trash/boards/${id}/restore`, { method: 'POST' }),
+  restoreProject: (id: string) => req<{ ok: boolean }>(`/api/trash/projects/${id}/restore`, { method: 'POST' }),
+  purgeBoard: (id: string) => req<{ ok: boolean }>(`/api/trash/boards/${id}`, { method: 'DELETE' }),
+  purgeProject: (id: string) => req<{ ok: boolean }>(`/api/trash/projects/${id}`, { method: 'DELETE' }),
   templates: () => req<TemplateSummary[]>('/api/templates'),
   template: (id: string) => req<{ id: string; name: string; items: Item[]; connections: Connection[] }>(`/api/templates/${id}`),
   saveTemplate: (name: string, items: Item[], connections: Connection[], category = '') =>

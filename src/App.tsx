@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, setActorName, socket, type Session } from './api';
 import { AdminPage } from './components/AdminPage';
+import { TrashPage } from './components/TrashPage';
 import { BoardShareDialog } from './components/BoardShareDialog';
 import { BoardView } from './components/BoardView';
 import { Home } from './components/Home';
@@ -8,13 +9,14 @@ import { ShareDialog } from './components/ShareDialog';
 import { Sidebar } from './components/Sidebar';
 import type { BoardSummary, Project } from './types';
 
-type Route = { board: string | null; project: string | null; admin: boolean };
+type Route = { board: string | null; project: string | null; admin: boolean; trash: boolean };
 
 function useHashRoute() {
   const read = (): Route => ({
     board: location.hash.match(/^#\/b\/([\w-]+)/)?.[1] ?? null,
     project: location.hash.match(/^#\/p\/([\w-]+)/)?.[1] ?? null,
     admin: location.hash === '#/admin',
+    trash: location.hash === '#/trash',
   });
   const [route, setRoute] = useState(read);
   useEffect(() => {
@@ -113,7 +115,7 @@ export default function App() {
 
   const deleteBoard = useCallback(async (id: string) => {
     const b = byId[id];
-    if (!window.confirm(`Delete “${b?.title || 'this board'}” and everything inside? This can’t be undone.`)) return;
+    if (!window.confirm(`Move “${b?.title || 'this board'}” and the boards inside it to the trash? You can restore it from Trash for 30 days.`)) return;
     try {
       const { deleted } = await api.deleteBoard(id);
       setBoards((list) => list.filter((x) => !deleted.includes(x.id)));
@@ -146,6 +148,8 @@ export default function App() {
           isTeam={isTeam}
           isAdmin={isAdmin}
           adminOpen={route.admin}
+          trashOpen={route.trash}
+          onOpenTrash={() => { location.hash = '/trash'; }}
           onOpenAdmin={() => { location.hash = '/admin'; }}
           me={name}
           onOpen={go}
@@ -171,7 +175,9 @@ export default function App() {
         />
       )}
       <main className="main">
-        {route.admin && isAdmin ? (
+        {route.trash && isTeam ? (
+          <TrashPage notify={notify} sidebarOpen={sidebar} toggleSidebar={() => setSidebar((s) => !s)} />
+        ) : route.admin && isAdmin ? (
           <AdminPage
             me={name}
             notify={notify}

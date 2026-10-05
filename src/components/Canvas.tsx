@@ -4,12 +4,12 @@ import { COLORS, color, imageFromHtml, isInColumn, isMediaUrl, isUrl, kindForMim
 import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
 import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
-import { CanvasContext, type CanvasCtx } from './CanvasContext';
+import { CanvasContext, type CanvasCtx, type PlayMedia } from './CanvasContext';
 import { ItemBody } from './items';
-import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
+import { DockPositionMenu, TOOL_MIME, Toolbar, useDockPosition, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
 import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
-import { ASSET_MIME, AssetsPanel, assetKind } from './AssetsPanel';
+import { ASSET_MIME, AssetsPanel, askName, assetKind } from './AssetsPanel';
 import { NOTE_MIME } from './NotesPanel';
 import type { Asset } from '../api';
 import {
@@ -29,6 +29,8 @@ interface Props {
   notify: (msg: string) => void;
   /** What the current person may do here (the server enforces the same rules). */
   access?: Access;
+  /** Opens a video in the page's side player. */
+  onPlay?: (m: PlayMedia) => void;
   /** Comment pins, popovers and comment mode (state lives with the page, shared with the panel). */
   comments?: CommentsProps;
 }
@@ -44,6 +46,14 @@ const EDIT_ON_CREATE: ItemType[] = ['note', 'heading', 'link', 'column', 'board'
 const COLORABLE: ItemType[] = ['note', 'heading', 'column', 'board', 'todo', 'table'];
 const MIN_W: Partial<Record<ItemType, number>> = { heading: 90, image: 60, video: 120, link: 160, board: 120 };
 const TEXT_SIZED: ItemType[] = ['note', 'heading', 'todo', 'table'];
+const FILE_TYPES: ItemType[] = ['image', 'video', 'audio', 'file'];
+const TEXT_STYLES: [string, '' | 'h1' | 'h2' | 'h3' | 'label'][] = [['Text', ''], ['H1', 'h1'], ['H2', 'h2'], ['H3', 'h3'], ['Label', 'label']];
+
+function htmlToPlain(html = '') {
+  const d = document.createElement('div');
+  d.innerHTML = html.replace(/<\/(p|div|h\d|li)>/gi, '\n');
+  return (d.textContent || '').replace(/\n+/g, ' ').trim();
+}
 const TEXT_SIZES: [string, number][] = [['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['2XL', 34]];
 const MEDIA_SIZED: ItemType[] = ['image', 'video', 'link', 'audio', 'file'];
 const MEDIA_SIZES: [string, number][] = [['S', 220], ['M', 380], ['L', 620], ['XL', 960]];
@@ -86,7 +96,7 @@ function loadView(id: string): View | null {
   } catch { return null; }
 }
 
-export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', comments }: Props) {
+export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', comments, onPlay }: Props) {
   const canEdit = access === 'manage' || access === 'edit';
   const canComment = canEdit || access === 'comment';
   // Only editors change cards. Comments are saved separately (see Comments.tsx).
@@ -122,6 +132,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const pendingConnect = useRef<{ id: string; side: Side } | null>(null);
   const isTeamHere = access === 'manage';
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const [dock, setDock] = useDockPosition();
   // Dragging one end of a selected line to re-attach it.
   const [reattach, setReattach] = useState<{ conn: string; end: 'from' | 'to'; x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -427,6 +438,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     if (tool === 'image') return pickFiles('image/*', at);
     if (tool === 'upload') return pickFiles('', at);
     if (tool === 'board') { addBoard(at); return; }
+    // "Heading" is now a style of the Text card.
+    if (tool === 'heading') { addItem('note', at, { textStyle: 'h1' }); return; }
     addItem(tool, at);
   }, [addBoard, addItem, placeAt, setCommentUi, toggleCommentMode]);
 
@@ -471,7 +484,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const boardCards = [...ids].map((id) => b.items[id]).filter((it) => it.type === 'board' && it.boardId);
     if (boardCards.length) {
       const names = boardCards.map((it) => `“${boards[it.boardId!]?.title || 'Untitled'}”`).join(', ');
-      if (!window.confirm(`Delete ${names} and everything inside? This can’t be undone.`)) return;
+      if (!window.confirm(`Move ${names} and the boards inside to the trash? You can restore from Trash for 30 days.`)) return;
     }
     change((bb) => {
       const next = { ...bb.items };
@@ -502,12 +515,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   }, [boards, change, getBoard, selConn]);
 
   /** Clone cards (and their column children and the lines between them) into this board. */
-  const insertClones = useCallback((srcItems: Item[], srcConns: Connection[], offset: { x: number; y: number }) => {
+  const insertClones = useCallback((srcItems: Item[], srcConns: Connection[], offset: { x: number; y: number }, copyBoards = false) => {
     const b = getBoard();
     if (!b) return;
     const idMap = new Map<string, string>();
     const src = new Map(srcItems.map((it) => [it.id, it]));
-    for (const it of srcItems) if (it.type !== 'board') idMap.set(it.id, uid());
+    // Board cards are only copied when asked (Alt-drag): the nested board is then copied on the server.
+    for (const it of srcItems) if (it.type !== 'board' || copyBoards) idMap.set(it.id, uid());
     let z = maxZ(b.items);
     const clones: Item[] = [];
     for (const it of srcItems) {
@@ -536,8 +550,16 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     }));
     const top = clones.filter((c) => !c.parentId).map((c) => c.id);
     setSelection(new Set(top));
+    if (copyBoards) {
+      for (const c of clones) {
+        if (c.type !== 'board' || !c.boardId) continue;
+        api.duplicateBoard(c.boardId, board.id)
+          .then((nb) => updateItem(c.id, { boardId: nb.id }))
+          .catch((err) => notify(err.message));
+      }
+    }
     return top;
-  }, [change, getBoard, me]);
+  }, [board.id, change, getBoard, me, notify, updateItem]);
 
   const collectSelection = useCallback(() => {
     const b = getBoard();
@@ -634,6 +656,20 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       notify((err as Error).message);
     }
   }, [notify]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Text card styles: Text / H1 / H2 / H3, or Label (the coloured heading card). */
+  const setTextStyle = useCallback((it: Item, style: '' | 'h1' | 'h2' | 'h3' | 'label') => {
+    if (style === 'label') {
+      if (it.type === 'heading') return;
+      updateItem(it.id, { type: 'heading', text: htmlToPlain(it.text), textStyle: undefined, color: it.color || 'purple' });
+      return;
+    }
+    if (it.type === 'heading') {
+      updateItem(it.id, { type: 'note', text: textToHtml(it.text || ''), textStyle: style || undefined, color: undefined });
+      return;
+    }
+    updateItem(it.id, { textStyle: style || undefined });
+  }, [updateItem]);
 
   /** ⌘G: put the selected cards into a new group, keeping their reading order. */
   const groupSelection = useCallback(() => {
@@ -744,8 +780,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     if (!canEdit) return; // viewers and commenters can select and click, but not move things
 
     const b0 = getBoard()!;
-    const child = isInColumn(item, b0.items);
-    let ids = child ? [item.id] : [...sel].filter((id) => b0.items[id] && !isInColumn(b0.items[id], b0.items));
+    const inGroup = isInColumn(item, b0.items);
+    // Alt/Option-drag drags a copy and leaves the original where it was.
+    const dup = e.altKey;
+    const child = inGroup && !dup;
+    let ids = inGroup ? [item.id] : [...sel].filter((id) => b0.items[id] && !isInColumn(b0.items[id], b0.items));
     if (!ids.includes(item.id)) ids = [item.id];
     const start = toWorld(e.clientX, e.clientY);
     const sx = e.clientX;
@@ -761,6 +800,19 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
         moved = true;
         setDragging(true);
+        if (dup) {
+          const b = getBoard()!;
+          const all = new Set<string>();
+          for (const id of ids) { all.add(id); b.items[id]?.childIds?.forEach((c) => b.items[c] && all.add(c)); }
+          // A card copied out of a group starts as a free card where it is on screen.
+          const srcItems = [...all].map((id) => {
+            const it = b.items[id];
+            const r = rectsRef.current[id];
+            return ids.includes(id) && isInColumn(it, b.items) && r ? { ...it, parentId: null, x: r.x, y: r.y, w: Math.round(r.w) } : it;
+          });
+          const conns = Object.values(b.connections).filter((c) => all.has(c.from) && all.has(c.to));
+          ids = insertClones(srcItems, conns, { x: 0, y: 0 }, true) || ids;
+        }
         change((b) => {
           const next = { ...b.items };
           let z = maxZ(next);
@@ -1246,6 +1298,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
 
   const ctx: CanvasCtx = {
     me,
+    canEdit,
+    play: onPlay,
     boardId: board.id,
     notify,
     items,
@@ -1307,7 +1361,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     <CanvasContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${commentMode ? 'is-comment-mode' : ''} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
+        className={`canvas ${dragging ? 'is-dragging' : ''} ${lineMode ? 'is-line-mode' : ''} ${commentMode ? 'is-comment-mode' : ''} dock-${dock} ${spaceHeld ? 'is-space' : ''} ${canEdit ? '' : `is-readonly is-${access}`}`}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px` }}
         onPointerDown={onBgPointerDown}
         onPointerMove={onPointerMove}
@@ -1403,7 +1457,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         {!free.length && (
           <div className="empty-hint">
             <b>This board is empty</b>
-            <span>{canEdit ? 'Drag cards from the toolbar, double-click to add a note, paste a link, or drop files here.' : 'Nothing has been added here yet.'}</span>
+            <span>{canEdit ? 'Drag cards from the toolbar, double-click to add text, press ⇧A, paste a link, or drop files here.' : 'Nothing has been added here yet.'}</span>
           </div>
         )}
 
@@ -1489,6 +1543,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                     <span className="sep" />
                   </>
                 )}
+                {single && (single.type === 'note' || single.type === 'heading') && (
+                  <>
+                    <div className="seg compact" title="Text style">
+                      {TEXT_STYLES.map(([label, style]) => {
+                        const on = style === 'label' ? single.type === 'heading' : single.type === 'note' && (single.textStyle || '') === style;
+                        return <button key={label} className={on ? 'is-on' : ''} onClick={() => setTextStyle(single, style)}>{label}</button>;
+                      })}
+                    </div>
+                    <span className="sep" />
+                  </>
+                )}
                 {selItems.length > 0 && selItems.every((it) => TEXT_SIZED.includes(it.type)) && (
                   <>
                     <span className="bar-label">Text</span>
@@ -1533,6 +1598,18 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 {single?.type === 'board' && (
                   <button className="icon-btn" title="Rename" onClick={() => setEditingId(single.id)}><IconEdit size={16} /></button>
                 )}
+                {single && FILE_TYPES.includes(single.type) && single.fileName && single.url?.startsWith('/uploads/') && (
+                  <button
+                    className="text-btn"
+                    title="Rename this file (also in Assets)"
+                    onClick={() => {
+                      const name = askName(single.fileName!);
+                      if (name) api.renameAsset(board.id, single.url!, name).catch((err) => notify(err.message));
+                    }}
+                  >
+                    Rename
+                  </button>
+                )}
                 {single?.url && (
                   <a className="icon-btn" title="Open in new tab" href={single.url} target="_blank" rel="noopener noreferrer"><IconExternal size={16} /></a>
                 )}
@@ -1567,7 +1644,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           <QuickAdd
             left={quickAdd.left}
             top={quickAdd.top}
-            tools={(['note', 'heading', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
+            tools={(['note', 'link', 'todo', 'table', 'column', 'board', 'image', 'upload', ...(quickAdd.from || !comments ? [] : ['comment'])] as Tool[])}
             templates={isTeamHere ? templates : null}
             onPick={pickQuick}
             onDeleteTemplate={isTeamHere ? (t) => {
@@ -1606,16 +1683,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
         </div>
       </div>
 
-      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} />}
+      {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} position={dock} onPosition={setDock} />}
       {canEdit && assetsOpen && (
-        <AssetsPanel boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
+        <AssetsPanel dock={dock} boardId={board.id} hasProject={Boolean(board.projectId)} onAdd={(a) => addAsset(a)} onClose={() => setAssetsOpen(false)} />
       )}
       {!canEdit && canComment && comments && (
-        <nav className="toolbar is-compact" onPointerDown={(e) => e.stopPropagation()}>
+        <nav className={`toolbar is-compact dock dock-${dock}`} onPointerDown={(e) => e.stopPropagation()}>
           <button className={`tool ${commentMode ? 'is-active' : ''}`} title="Comment (M)" onClick={toggleCommentMode}>
             <span className="tool-icon"><IconComment /></span>
             <span className="tool-label">Comment</span>
           </button>
+          <DockPositionMenu pos={dock} onChange={setDock} />
         </nav>
       )}
 

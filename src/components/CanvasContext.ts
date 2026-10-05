@@ -1,8 +1,14 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { BoardSummary, Item } from '../types';
 
+/** Something to watch in the side player. */
+export interface PlayMedia { title: string; provider: string; url?: string; iframe?: string; video?: string; aspect?: number }
+
 export interface CanvasCtx {
   me: string;
+  canEdit: boolean;
+  /** Open a video in the player beside the board (when the page has one). */
+  play?: (m: PlayMedia) => void;
   boardId: string;
   notify: (msg: string) => void;
   items: Record<string, Item>;

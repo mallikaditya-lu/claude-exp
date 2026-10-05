@@ -11,9 +11,8 @@ edits, presence and cursors live.
 
 | Card | What it does |
 | --- | --- |
-| **Note** | Rich text: bold, italic, headings, lists, links. Click a selected note (or double-click) to edit. |
-| **Heading** | Coloured label for structuring sections ("Hero movie" → "Narration", "Music options"…). |
-| **Link** | Paste any URL. YouTube, Vimeo, Loom, Spotify, SoundCloud, Apple Music, Figma, Google Docs/Drive and direct media links become **playable embeds**; other sites get a preview card (title, image, description). |
+| **Text** | Rich text: bold, italic, lists, links. Switch its style in the selection bar: **Text, H1, H2, H3**, or **Label** (a coloured section label like "Hero movie" → "Narration"). Click a selected text card (or double-click) to edit. |
+| **Link** | Paste any URL. YouTube, Vimeo, Loom, Spotify, SoundCloud, Apple Music, Figma, Google Docs/Drive and direct media links become **playable embeds**; other sites get a preview card (title, image, description). Video links (YouTube, Vimeo, Loom) show a poster: **Play opens a large player beside the board** (drag its edge to resize, Esc to close) so you can keep working while watching. No URL footer: instead every link, video, audio and file card can have your own **note** underneath (select it and click *+ Add a note*). |
 | **To-do** | Checklist with progress. Enter adds a task and Backspace on an empty task removes it. |
 | **Table** | Grid for scripts, shot lists and comparisons. Cells can hold images, GIFs, videos and links: paste or drop them into a cell (a line that is a media link shows the media; other links become chips). Drag header borders to resize columns; Tab moves to the next cell. |
 | **Comment** | Figma-style pins: press **M** (or the Comment tool) and click anywhere, or on a card (the pin then moves with the card). Click a pin to reply, resolve it, or edit or delete your own comments. The **Comments** panel on the right lists every thread, open or resolved, with an *Only yours* filter. |
@@ -25,15 +24,18 @@ edits, presence and cursors live.
 ## Projects and backgrounds
 
 - **Projects** group boards like folders. The home page shows every project, recently updated boards, and boards without a project. Open a project to see only its boards. Nested boards follow their parent's project.
-- Move a board between projects with the **⋯** menu on its tile. Deleting a project keeps its boards; they become unfiled.
+- The **⋯** menu on a board tile moves it to another project, duplicates it (with the boards inside), changes its cover, or deletes it. Project tiles have a ⋯ menu too (cover, delete), and a project page has a **Cover** button. Covers can be any image in the project or a new upload; "automatic" uses the first image on its boards.
+- **Trash:** deleting a board or project moves it (with the boards inside) to **Trash** in the sidebar for 30 days. Restore it from there (a board's card comes back on its parent board), or delete it forever. After 30 days it's deleted automatically.
 - **Board background:** use the palette button in a board's top bar. Dark backgrounds (Graphite, Charcoal, Midnight, Forest) switch that board's cards and tools to dark grey. The choice is saved on the board, so everyone sees it.
 
 ## Using it
 
-- **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick note. Press **⇧A** for an add menu right at the cursor: type to filter, paste a link, or type text to make a note. Templates are listed there too.
+- **Toolbar:** a dock at the bottom of the board that magnifies under the pointer like the macOS Dock. Its **⋯** button moves it to the left, right or top (remembered per person).
+- **Add cards:** click a toolbar item (it drops in a free spot) or drag it onto the canvas. Double-click empty canvas for a quick text card. Press **⇧A** for an add menu right at the cursor: type to filter, paste a link, or type text to make a note. Templates are listed there too.
 - **Drag a line into empty space:** the same menu opens there, and the new card is connected to the line.
 - **Templates (core team):** select cards (a group, table, to-do list, note, or a mix) and click the template button in the selection bar. Templates are filed by type (Groups, Tables, To-do lists, Notes, Layouts) in the ⇧A menu, where they can also be deleted.
-- **Assets:** the **Assets** button at the bottom of the left toolbar lists every file uploaded or pasted onto the board, including ones whose cards were deleted, or for the whole project. Click or drag one to add it again.
+- **Duplicate by dragging:** hold **Alt/Option** while dragging cards to drag a copy. A board card gets a real copy of its board.
+- **Assets:** the **Assets** (folder) button in the toolbar lists every file uploaded or pasted onto the board, including ones whose cards were deleted, or for the whole project. Click or drag one to add it again. Rename files there (pencil on hover) or from a selected card's **Rename** button.
 - **Notes:** the notes button in the top bar opens the board's scratchpad on the right, in the same column as Comments (switch with the tabs). Shared live with everyone who can edit the board, never shown to clients or viewers. Drag a note onto the board to make it a card.
 - **Paste anything:** a URL makes a link card, an image uploads (GIFs stay animated), and plain text makes a note.
 - **Connect:** select a card and drag any of the four dots (top, right, bottom, left) onto another card. Drop near an edge to attach to that side, or near the middle to let the line pick the best side. The **Line** tool (click two cards) also works.
@@ -47,7 +49,7 @@ edits, presence and cursors live.
 | --- | --- |
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | Space + drag / middle-drag | Pan |
-| ⌘D | Duplicate |
+| ⌘D / Alt-drag | Duplicate |
 | ⌘G / ⇧⌘G | Group / ungroup |
 | ⇧A | Add menu at the cursor |
 | M | Comment mode |
@@ -55,7 +57,7 @@ edits, presence and cursors live.
 | Delete / Backspace | Delete selection |
 | Arrows (⇧ for 10px) | Nudge |
 | Enter | Edit selected card |
-| N, H, L, T, B, C | New note, heading, link, to-do, board, line |
+| N, H, L, T, B, C | New text, heading, link, to-do, board, line |
 | ⌘+ / ⌘− / ⌘0 | Zoom in / out / 100% |
 
 ## Running it

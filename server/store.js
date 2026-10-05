@@ -12,8 +12,12 @@ export class Store {
     this.timers = new Map();
     this.projectsFile = path.join(dataDir, 'projects.json');
     this.projects = new Map();
+    // Recycle bin: deleted boards and projects live here (not in the maps above) for 30 days,
+    // so every normal lookup ignores them without extra checks.
+    this.trash = new Map();
+    this.trashedProjects = new Map();
     try {
-      for (const p of JSON.parse(fs.readFileSync(this.projectsFile, 'utf8'))) this.projects.set(p.id, p);
+      for (const p of JSON.parse(fs.readFileSync(this.projectsFile, 'utf8'))) (p.deletedAt ? this.trashedProjects : this.projects).set(p.id, p);
     } catch (err) {
       if (err.code !== 'ENOENT') console.error('Could not read projects:', err.message);
     }
@@ -22,6 +26,7 @@ export class Store {
       try {
         const b = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8'));
         if (b && b.id) {
+          if (b.deletedAt) { this.trash.set(b.id, b); continue; }
           this.boards.set(b.id, b);
           if (migrateComments(b).items.length) this.persist(b.id);
         }
@@ -33,7 +38,8 @@ export class Store {
 
   summary(b) {
     const items = Object.values(b.items);
-    const cover = items.find((i) => i.type === 'image' && i.url)?.url
+    // A chosen cover wins; otherwise the first image (or link preview) on the board.
+    const cover = b.cover || items.find((i) => i.type === 'image' && i.url)?.url
       || items.find((i) => i.type === 'link' && i.thumb)?.thumb
       || null;
     return {
@@ -88,6 +94,10 @@ export class Store {
     if (typeof patch.title === 'string') {
       board.title = patch.title.slice(0, 200);
       clean.title = board.title;
+    }
+    if (patch.cover === null || (typeof patch.cover === 'string' && /^(\/uploads\/|https:\/\/)/.test(patch.cover))) {
+      board.cover = patch.cover ? patch.cover.slice(0, 500) : null;
+      clean.cover = board.cover;
     }
     if (patch.background === null || typeof patch.background === 'string') {
       board.background = patch.background ? patch.background.slice(0, 40) : null;
@@ -184,6 +194,146 @@ export class Store {
     return board;
   }
 
+  /**
+   * Copy a board and every board nested in it. The copy goes under `parentId` (or the top level
+   * of the same project). Comments, notes, invites and share links are not copied.
+   */
+  duplicate(id, parentId = null) {
+    const src = this.boards.get(id);
+    if (!src) return null;
+    const ids = this.subtree(id);
+    const map = new Map(ids.map((old) => [old, crypto.randomUUID()]));
+    const now = Date.now();
+    const parent = parentId ? this.boards.get(parentId) : null;
+    for (const old of ids) {
+      const b = this.boards.get(old);
+      const copy = {
+        id: map.get(old),
+        title: old === id ? `${b.title} (copy)`.slice(0, 200) : b.title,
+        parentId: old === id ? (parent ? parent.id : null) : map.get(b.parentId) || null,
+        projectId: old === id ? (parent ? parent.projectId || null : b.projectId || null) : null,
+        background: b.background || null,
+        cover: b.cover || null,
+        items: structuredClone(b.items),
+        connections: structuredClone(b.connections),
+        threads: {},
+        assets: structuredClone(b.assets || []),
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Board cards inside the copy point at the copied boards.
+      for (const it of Object.values(copy.items)) if (it.type === 'board' && map.has(it.boardId)) it.boardId = map.get(it.boardId);
+      this.boards.set(copy.id, copy);
+    }
+    const root = this.boards.get(map.get(id));
+    for (const nid of map.values()) {
+      const b = this.boards.get(nid);
+      if (nid !== root.id) b.projectId = root.projectId;
+      this.persist(nid);
+    }
+    return root;
+  }
+
+  // ---------- recycle bin ----------
+  /** Move boards to the trash. `root` is what restores them together (a board id, or "project:<id>"). */
+  trashBoards(ids, root, by) {
+    const now = Date.now();
+    for (const id of ids) {
+      const b = this.boards.get(id);
+      if (!b) continue;
+      Object.assign(b, { deletedAt: now, deletedBy: by, trashRoot: root });
+      this.boards.delete(id);
+      this.trash.set(id, b);
+      this.persist(id);
+    }
+  }
+
+  /** A board and every board nested in it. */
+  subtree(id) {
+    const ids = [id];
+    for (let i = 0; i < ids.length; i++) {
+      for (const b of this.boards.values()) if (b.parentId === ids[i]) ids.push(b.id);
+    }
+    return ids;
+  }
+
+  /** Delete a board (and its nested boards) into the trash. Returns the ids. */
+  trashBoard(id, by) {
+    if (!this.boards.has(id)) return [];
+    const ids = this.subtree(id);
+    this.trashBoards(ids, id, by);
+    return ids;
+  }
+
+  /** Delete a project into the trash, together with all of its boards. */
+  trashProject(id, by) {
+    const p = this.projects.get(id);
+    if (!p) return null;
+    const ids = [...this.boards.values()].filter((b) => b.projectId === id).map((b) => b.id);
+    this.trashBoards(ids, `project:${id}`, by);
+    Object.assign(p, { deletedAt: Date.now(), deletedBy: by });
+    this.projects.delete(id);
+    this.trashedProjects.set(id, p);
+    this.saveProjects();
+    return ids;
+  }
+
+  /** Bring boards back from the trash. Returns the restored boards. */
+  restoreRoot(root) {
+    const back = [...this.trash.values()].filter((b) => b.trashRoot === root);
+    for (const b of back) {
+      delete b.deletedAt; delete b.deletedBy; delete b.trashRoot;
+      this.trash.delete(b.id);
+      this.boards.set(b.id, b);
+    }
+    for (const b of back) {
+      // Its parent or project may be gone for good (or still in the trash): then it goes to the top level.
+      if (b.parentId && !this.boards.has(b.parentId)) b.parentId = null;
+      if (b.projectId && !this.projects.has(b.projectId)) b.projectId = null;
+      this.persist(b.id);
+    }
+    return back;
+  }
+
+  restoreProject(id) {
+    const p = this.trashedProjects.get(id);
+    if (!p) return null;
+    delete p.deletedAt; delete p.deletedBy;
+    this.trashedProjects.delete(id);
+    this.projects.set(id, p);
+    this.saveProjects();
+    return this.restoreRoot(`project:${id}`);
+  }
+
+  /** Delete forever: boards in the trash under this root. */
+  purgeRoot(root) {
+    for (const b of [...this.trash.values()]) {
+      if (b.trashRoot !== root) continue;
+      this.trash.delete(b.id);
+      clearTimeout(this.timers.get(b.id));
+      this.timers.delete(b.id);
+      fs.rm(this.file(b.id), { force: true }, () => {});
+    }
+  }
+
+  purgeProject(id) {
+    if (!this.trashedProjects.delete(id)) return false;
+    this.purgeRoot(`project:${id}`);
+    this.saveProjects();
+    return true;
+  }
+
+  /** Empty anything that has been in the trash longer than `days`. */
+  purgeOld(days = 30, now = Date.now()) {
+    const cutoff = now - days * 24 * 3600 * 1000;
+    let n = 0;
+    for (const p of [...this.trashedProjects.values()]) if (p.deletedAt < cutoff) { this.purgeProject(p.id); n++; }
+    const roots = new Set([...this.trash.values()].filter((b) => b.deletedAt < cutoff).map((b) => b.trashRoot));
+    for (const r of roots) { this.purgeRoot(r); n++; }
+    return n;
+  }
+
   // Deletes a board and every board nested beneath it. Returns the deleted ids.
   delete(id) {
     const board = this.boards.get(id);
@@ -234,11 +384,12 @@ export class Store {
     return project;
   }
 
-  updateProject(id, { name, color }) {
+  updateProject(id, { name, color, cover }) {
     const p = this.projects.get(id);
     if (!p) return null;
     if (typeof name === 'string') p.name = name.slice(0, 120) || 'Untitled project';
     if (typeof color === 'string') p.color = color.slice(0, 20);
+    if (cover === null || (typeof cover === 'string' && /^(\/uploads\/|https:\/\/)/.test(cover))) p.cover = cover ? cover.slice(0, 500) : null;
     this.saveProjects();
     return p;
   }
@@ -366,7 +517,7 @@ export class Store {
 
   saveProjects() {
     const tmp = `${this.projectsFile}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.listProjects(), null, 2));
+    fs.writeFileSync(tmp, JSON.stringify([...this.listProjects(), ...this.trashedProjects.values()], null, 2));
     fs.renameSync(tmp, this.projectsFile);
   }
 
@@ -381,7 +532,7 @@ export class Store {
 
   writeNow(id) {
     this.timers.delete(id);
-    const board = this.boards.get(id);
+    const board = this.boards.get(id) || this.trash.get(id);
     if (!board) return;
     const tmp = `${this.file(id)}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(board));

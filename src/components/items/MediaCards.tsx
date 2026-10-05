@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatBytes, formatTime } from '../../lib';
 import { useCanvas, type CardProps } from '../CanvasContext';
-import { IconDownload, IconFile, IconPause, IconPlay } from '../icons';
+import { IconDownload, IconExpand, IconFile, IconPause, IconPlay } from '../icons';
+import { CardNote } from './CardNote';
 
 function Uploading({ id, name }: { id: string; name?: string }) {
   const { uploadProgress } = useCanvas();
@@ -49,20 +50,30 @@ export function ImageCard({ item, editing, update, setEditing }: CardProps) {
   );
 }
 
-export function VideoCard({ item }: CardProps) {
+export function VideoCard({ item, selected, update }: CardProps) {
+  const { play } = useCanvas();
   if (item.uploading || !item.url) return <Uploading id={item.id} name={item.fileName} />;
   // GIF-style video: plays silently on a loop, like the GIF it came from.
   if (item.loop) {
     return (
       <div className="image-card">
         <video src={item.url} autoPlay muted loop playsInline preload="auto" />
+        <CardNote item={item} selected={selected} update={update} />
       </div>
     );
   }
   return (
     <div className="video-card">
-      <video src={item.url} controls preload="metadata" playsInline />
+      <div className="video-wrap">
+        <video src={item.url} controls preload="metadata" playsInline />
+        {play && (
+          <button className="video-big nodrag" title="Watch large, beside the board" onClick={() => play({ title: item.fileName || 'Video', provider: 'Video', video: item.url! })}>
+            <IconExpand size={14} />
+          </button>
+        )}
+      </div>
       <FileFooter url={item.url} name={item.fileName} size={item.size} />
+      <CardNote item={item} selected={selected} update={update} />
     </div>
   );
 }
@@ -143,16 +154,22 @@ export function AudioPlayer({ src, name, size, download = true }: { src: string;
   );
 }
 
-export function AudioCard({ item }: CardProps) {
+export function AudioCard({ item, selected, update }: CardProps) {
   if (item.uploading || !item.url) return <Uploading id={item.id} name={item.fileName} />;
-  return <AudioPlayer src={item.url} name={item.fileName} size={item.size} />;
+  return (
+    <div className="audio-link">
+      <AudioPlayer src={item.url} name={item.fileName} size={item.size} />
+      <CardNote item={item} selected={selected} update={update} />
+    </div>
+  );
 }
 
-export function FileCard({ item }: CardProps) {
+export function FileCard({ item, selected, update }: CardProps) {
   if (item.uploading || !item.url) return <Uploading id={item.id} name={item.fileName} />;
   const ext = (item.fileName?.split('.').pop() || 'file').slice(0, 4).toUpperCase();
   const isPdf = item.mime === 'application/pdf' || ext === 'PDF';
   return (
+    <div>
     <div className="file-card">
       <div className="file-icon">
         <IconFile size={30} />
@@ -166,6 +183,8 @@ export function FileCard({ item }: CardProps) {
           <span>· {formatBytes(item.size)}</span>
         </div>
       </div>
+    </div>
+    <CardNote item={item} selected={selected} update={update} />
     </div>
   );
 }

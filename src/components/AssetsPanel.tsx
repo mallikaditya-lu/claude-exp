@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Asset } from '../api';
 import { formatBytes, timeAgo } from '../lib';
-import { IconFile, IconSearch, IconX } from './icons';
+import { IconEdit, IconFile, IconSearch, IconX } from './icons';
 
 // Everything uploaded or imported to this board (or its whole project), kept even after the card
 // is deleted, so a file can be found and reused instead of uploaded again.
@@ -17,14 +17,23 @@ export function assetKind(a: Pick<Asset, 'mime' | 'name'>): Exclude<Kind, 'all'>
   return 'file';
 }
 
+/** Ask for a new file name, keeping the extension if it was left off. */
+export function askName(current: string) {
+  const input = window.prompt('Rename file', current)?.trim();
+  if (!input || input === current) return null;
+  const ext = current.match(/\.[a-z0-9]{1,6}$/i)?.[0] || '';
+  return ext && !/\.[a-z0-9]{1,6}$/i.test(input) ? `${input}${ext}` : input;
+}
+
 interface Props {
+  dock: string;
   boardId: string;
   hasProject: boolean;
   onAdd: (a: Asset) => void;
   onClose: () => void;
 }
 
-export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
+export function AssetsPanel({ dock, boardId, hasProject, onAdd, onClose }: Props) {
   const [scope, setScope] = useState<'board' | 'project'>('board');
   const [kind, setKind] = useState<Kind>('all');
   const [q, setQ] = useState('');
@@ -40,7 +49,7 @@ export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
     (kind === 'all' || assetKind(a) === kind) && (!q.trim() || a.name.toLowerCase().includes(q.trim().toLowerCase()))), [list, kind, q]);
 
   return (
-    <aside className="assets-panel" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+    <aside className={`assets-panel dock-${dock}`} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <div className="assets-head">
         <b>Assets</b>
         <div className="grow" />
@@ -88,7 +97,21 @@ export function AssetsPanel({ boardId, hasProject, onAdd, onClose }: Props) {
                 {(k === 'audio' || k === 'file') && <IconFile size={26} />}
                 {!a.onBoard && a.boardId === boardId && <span className="asset-badge" title="Not on the board any more">removed</span>}
               </div>
-              <div className="asset-name">{a.name}</div>
+              <div className="asset-name-row">
+                <div className="asset-name">{a.name}</div>
+                <button
+                  className="icon-btn asset-rename"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const name = askName(a.name);
+                    if (!name) return;
+                    api.renameAsset(a.boardId, a.url, name).then(() => load()).catch((err) => setError(err.message));
+                  }}
+                >
+                  <IconEdit size={12} />
+                </button>
+              </div>
               <div className="asset-meta">{a.size ? formatBytes(a.size) : k}{scope === 'project' ? ` · ${a.boardTitle}` : ''}</div>
             </div>
           );

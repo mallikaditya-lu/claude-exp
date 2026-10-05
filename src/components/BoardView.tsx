@@ -6,6 +6,8 @@ import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
 import { NotesPanel } from './NotesPanel';
+import { PlayerPanel } from './PlayerPanel';
+import type { PlayMedia } from './CanvasContext';
 import { Avatar } from './items/TextCards';
 import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo, IconX } from './icons';
 
@@ -30,6 +32,7 @@ const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…
 export function BoardView({ boardId, boards, projects, me, myEmail, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
   const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
   const [guestShare, setGuestShare] = useState(false);
+  const [playing, setPlaying] = useState<PlayMedia | null>(null);
   const [comments, setComments] = useCommentUi();
   const actions = useCommentActions(boardId, applyServerPatch, notify);
   const identity: Identity = useMemo(() => ({ name: me, email: myEmail, visitor: false }), [me, myEmail]);
@@ -220,11 +223,13 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
             notify={notify}
             access={access}
             comments={{ ui: comments, setUi: setComments, me: identity, actions }}
+            onPlay={setPlaying}
           />
         ) : (
           <div className="splash"><div className="spinner" /></div>
         )}
       </div>
+      {playing && <PlayerPanel media={playing} onClose={() => setPlaying(null)} />}
       {comments.panel && side === 'comments' && <CommentsPanel board={board} access={access} ui={comments} setUi={setComments} me={identity} actions={actions} title={tabs} />}
       {comments.panel && side === 'notes' && board && (
         <NotesPanel board={board} applyServerPatch={applyServerPatch} notify={notify} title={tabs} onClose={() => setComments((u) => ({ ...u, panel: false }))} />
