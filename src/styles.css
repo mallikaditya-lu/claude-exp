@@ -1012,3 +1012,52 @@ kbd { font: inherit; font-size: 11.5px; padding: 1px 5px; border-radius: 4px; bo
 .board-tile:has(.menu), .project-tile:has(.menu) { z-index: 20; }
 .tile-menu .menu { max-height: 340px; overflow: auto; }
 .project-tile:hover .tile-menu-btn { opacity: 1; }
+
+/* ---------- link/media cards: posters, note line ---------- */
+.video-poster { position: relative; background: #111; overflow: hidden; border-radius: var(--radius) var(--radius) 0 0; }
+.link-card.is-embed:not(:has(.card-note, .card-note-add)) .video-poster { border-radius: var(--radius); }
+.video-poster img, .poster-blank { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.poster-blank { background: linear-gradient(135deg, #222, #3a3a3a); }
+.poster-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 38%, rgba(0, 0, 0, 0) 70%, rgba(0, 0, 0, 0.35) 100%); pointer-events: none; }
+.poster-title {
+  position: absolute; left: 12px; right: 44px; top: 10px; color: #fff; font-weight: 600; font-size: 0.95em; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); pointer-events: none;
+}
+.poster-play {
+  position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%;
+  display: grid; place-items: center; color: #111; background: rgba(255, 255, 255, 0.92); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s, background 0.12s;
+}
+.poster-play svg { margin-left: 3px; }
+.poster-play:hover { transform: scale(1.08); background: #fff; }
+.poster-open { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, 0.35); opacity: 0; transition: opacity 0.12s; }
+.card:hover .poster-open { opacity: 1; }
+.card-note { padding: 8px 12px 10px; font-size: 0.93em; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.card-note.is-editable { cursor: text; }
+.card-note textarea { width: 100%; border: 0; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; padding: 0; }
+.card-note-add { display: block; width: 100%; text-align: left; padding: 7px 12px 8px; font-size: 12.5px; color: var(--faint); }
+.card-note-add:hover { color: var(--accent); }
+.audio-link .card-note, .audio-link .card-note-add { border-top: 1px solid var(--border); }
+a.link-title { color: var(--text); text-decoration: none; display: -webkit-box; }
+a.link-title:hover { text-decoration: underline; }
+.video-wrap { position: relative; }
+.video-big { position: absolute; right: 8px; top: 8px; width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, 0.45); opacity: 0; transition: opacity 0.12s; }
+.card:hover .video-big { opacity: 1; }
+
+/* ---------- side player ---------- */
+.player-panel { position: relative; flex: none; display: flex; flex-direction: column; background: #0f1014; color: #fff; border-left: 1px solid var(--border); min-width: 0; }
+.player-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 2; }
+.player-resize:hover { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+.player-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 10px 16px; }
+.player-head .icon-btn { color: #ccd; }
+.player-head .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.player-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.player-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-title span { font-size: 12px; color: #9aa; }
+.player-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 12px 16px; }
+.player-frame { width: 100%; max-height: 100%; position: relative; }
+.player-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 8px; }
+.player-video { width: 100%; max-height: 100%; border-radius: 8px; background: #000; }
+body.is-resizing, body.is-resizing * { cursor: ew-resize !important; user-select: none; }
+body.is-resizing iframe { pointer-events: none; }
+@media (max-width: 720px) { .player-panel { position: absolute; inset: 0; width: auto !important; z-index: 60; } }

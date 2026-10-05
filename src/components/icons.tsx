@@ -69,3 +69,4 @@ export const IconUsers = make(<><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0
 export const IconEye = make(<><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>);
 export const IconCheck = make(<><circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.7 2.7L16.2 9.5" /></>);
 export const IconTemplate = make(<><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><path d="M17 14v6M14 17h6" /></>);
+export const IconExpand = make(<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />);

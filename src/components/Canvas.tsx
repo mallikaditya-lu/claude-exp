@@ -4,7 +4,7 @@ import { COLORS, color, imageFromHtml, isInColumn, isMediaUrl, isUrl, kindForMim
 import { SIDES, STROKE, route, sideForPoint, type SegmentHandle } from '../connectors';
 import type { Access, Board, BoardSummary, Connection, Item, ItemType, Rect, Side } from '../types';
 import { ConnectorToolbar } from './ConnectorToolbar';
-import { CanvasContext, type CanvasCtx } from './CanvasContext';
+import { CanvasContext, type CanvasCtx, type PlayMedia } from './CanvasContext';
 import { ItemBody } from './items';
 import { TOOL_MIME, Toolbar, type Tool } from './Toolbar';
 import { CommentLayer, pinPoint, type CommentsProps, type Place } from './Comments';
@@ -29,6 +29,8 @@ interface Props {
   notify: (msg: string) => void;
   /** What the current person may do here (the server enforces the same rules). */
   access?: Access;
+  /** Opens a video in the page's side player. */
+  onPlay?: (m: PlayMedia) => void;
   /** Comment pins, popovers and comment mode (state lives with the page, shared with the panel). */
   comments?: CommentsProps;
 }
@@ -86,7 +88,7 @@ function loadView(id: string): View | null {
   } catch { return null; }
 }
 
-export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', comments }: Props) {
+export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards, me, openBoard, notify, access = 'manage', comments, onPlay }: Props) {
   const canEdit = access === 'manage' || access === 'edit';
   const canComment = canEdit || access === 'comment';
   // Only editors change cards. Comments are saved separately (see Comments.tsx).
@@ -1246,6 +1248,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
 
   const ctx: CanvasCtx = {
     me,
+    canEdit,
+    play: onPlay,
     boardId: board.id,
     notify,
     items,

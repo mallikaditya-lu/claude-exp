@@ -131,6 +131,20 @@ export type Embed =
   | { kind: 'iframe'; src: string; aspect?: number; height?: number; provider: string }
   | { kind: 'image' | 'video' | 'audio'; src: string; provider: string };
 
+/** A still image for a video link (YouTube has fixed thumbnail URLs; others come from the link preview). */
+export function videoThumb(raw?: string) {
+  const src = resolveEmbed(raw);
+  const yt = src?.kind === 'iframe' && src.provider === 'YouTube' ? src.src.match(/\/embed\/([\w-]+)/)?.[1] : null;
+  return yt ? `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` : null;
+}
+
+/** Video sites shown as a poster that opens the side player, rather than a tiny inline player. */
+export const PLAYER_PROVIDERS = ['YouTube', 'Vimeo', 'Loom'];
+
+export function withAutoplay(src: string) {
+  try { const u = new URL(src); u.searchParams.set('autoplay', '1'); return u.href; } catch { return src; }
+}
+
 export function resolveEmbed(raw?: string): Embed | null {
   if (!raw) return null;
   let u: URL;

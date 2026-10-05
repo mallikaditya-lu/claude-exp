@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api';
-import { hostname, resolveEmbed } from '../../lib';
-import type { CardProps } from '../CanvasContext';
+import { PLAYER_PROVIDERS, hostname, resolveEmbed, videoThumb, withAutoplay } from '../../lib';
+import { useCanvas, type CardProps } from '../CanvasContext';
+import { CardNote } from './CardNote';
 import { IconExternal, IconLink } from '../icons';
 import { AudioPlayer } from './MediaCards';
 
@@ -25,6 +26,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
   const [draft, setDraft] = useState(item.url || '');
   const [error, setError] = useState('');
   const embed = resolveEmbed(item.url);
+  const { play } = useCanvas();
 
   useEffect(() => {
     if (!item.url || item.unfurled || unfurling.has(item.id)) return;
@@ -68,11 +70,31 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
     );
   }
 
-  const openBtn = (
-    <a className="icon-btn" href={item.url} target="_blank" rel="noopener noreferrer" title="Open link">
-      <IconExternal size={14} />
-    </a>
-  );
+  const note = <CardNote item={item} selected={selected} update={update} />;
+
+  // Video sites: a poster with a play button; playing opens the big player beside the board.
+  if (embed?.kind === 'iframe' && PLAYER_PROVIDERS.includes(embed.provider) && play) {
+    const poster = videoThumb(item.url) || item.thumb;
+    const title = item.title || embed.provider;
+    return (
+      <div className="link-card is-embed">
+        <div className="video-poster" style={{ aspectRatio: embed.aspect || 16 / 9 }}>
+          {poster ? <img src={poster} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" /> : <div className="poster-blank" />}
+          <div className="poster-shade" />
+          <div className="poster-title">{title}</div>
+          <button
+            className="poster-play nodrag"
+            title={`Play (opens beside the board)`}
+            onClick={() => play({ title, provider: embed.provider, url: item.url, iframe: withAutoplay(embed.src), aspect: embed.aspect })}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+          </button>
+          <a className="poster-open nodrag" href={item.url} target="_blank" rel="noopener noreferrer" title={`Open on ${embed.provider}`}><IconExternal size={14} /></a>
+        </div>
+        {note}
+      </div>
+    );
+  }
 
   if (embed?.kind === 'iframe') {
     return (
@@ -87,14 +109,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
           />
           {!selected && <div className="embed-shield" />}
         </div>
-        <div className="link-meta">
-          <Favicon url={item.url} />
-          <div className="link-meta-text">
-            <div className="link-title">{item.title || embed.provider}</div>
-            <div className="link-host">{embed.provider}</div>
-          </div>
-          {openBtn}
-        </div>
+        {note}
       </div>
     );
   }
@@ -103,7 +118,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
     return (
       <div className="image-card">
         <img src={embed.src} alt="" draggable={false} loading="lazy" />
-        <div className="link-meta"><Favicon url={item.url} /><div className="link-host grow">{hostname(item.url)}</div>{openBtn}</div>
+        {note}
       </div>
     );
   }
@@ -111,12 +126,17 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
     return (
       <div className="video-card">
         <video src={embed.src} controls preload="metadata" playsInline />
-        <div className="link-meta"><Favicon url={item.url} /><div className="link-host grow">{hostname(item.url)}</div>{openBtn}</div>
+        {note}
       </div>
     );
   }
   if (embed?.kind === 'audio') {
-    return <AudioPlayer src={embed.src} name={decodeURIComponent(item.url.split('/').pop() || '')} download={false} />;
+    return (
+      <div className="audio-link">
+        <AudioPlayer src={embed.src} name={item.title || decodeURIComponent(item.url.split('/').pop() || '')} download={false} />
+        {note}
+      </div>
+    );
   }
 
   return (
@@ -134,14 +154,14 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
         </div>
       )}
       <div className="link-body">
-        <div className="link-title">{item.title || hostname(item.url)}</div>
+        <a className="link-title nodrag" href={item.url} target="_blank" rel="noopener noreferrer">{item.title || hostname(item.url)}</a>
         {item.description && <div className="link-desc">{item.description}</div>}
         <div className="link-meta">
           <Favicon url={item.url} />
           <div className="link-host grow">{item.siteName || hostname(item.url)}</div>
-          {openBtn}
         </div>
       </div>
+      {note}
     </div>
   );
 }

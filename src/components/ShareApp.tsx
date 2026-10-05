@@ -5,6 +5,8 @@ import type { BoardSummary } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { Avatar } from './items/TextCards';
+import { PlayerPanel } from './PlayerPanel';
+import type { PlayMedia } from './CanvasContext';
 import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
 import { IconChevron, IconComment, IconX } from './icons';
 
@@ -178,6 +180,7 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
 }) {
   const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
   const [menu, setMenu] = useState(false);
+  const [playing, setPlaying] = useState<PlayMedia | null>(null);
 
   // Breadcrumbs stop at the shared board: nothing above it was shared.
   const crumbs: BoardSummary[] = [];
@@ -273,11 +276,13 @@ function BoardPane({ boardId, rootId, boards, me, info, go, notify, onAskIdentit
               notify={notify}
               access={access}
               comments={{ ui: comments, setUi: setComments, me: identity, actions }}
+              onPlay={setPlaying}
             />
           ) : (
             <div className="splash"><div className="spinner" /></div>
           )}
         </div>
+        {playing && <PlayerPanel media={playing} onClose={() => setPlaying(null)} />}
         {comments.panel && (
           <CommentsPanel
             board={board}
