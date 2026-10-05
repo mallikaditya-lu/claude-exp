@@ -27,6 +27,21 @@ async function get(rawUrl, accept) {
   throw new Error('Too many redirects');
 }
 
+/** The bytes of an image on the web (public hosts only), up to maxBytes. */
+export async function fetchImage(rawUrl, maxBytes = 15 * 1024 * 1024) {
+  const { res } = await get(rawUrl, 'image/*');
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!type.startsWith('image/')) { await res.body?.cancel(); throw new Error('Not an image'); }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > maxBytes) throw new Error('Image too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** The media a web page is about (Giphy/Tenor-style pages): animated image first, then video. */
 function mediaFromPage(html, base) {
   const tags = parseMeta(html);

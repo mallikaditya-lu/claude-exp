@@ -166,6 +166,30 @@ export class Files {
     }
   }
 
+  /** The bytes of an uploaded file (local, cached, or from Drive). Throws if missing or too large. */
+  async read(name, maxBytes = 40 * 1024 * 1024) {
+    name = path.basename(name);
+    const local = path.join(this.uploadDir, name);
+    if (fs.existsSync(local)) {
+      if (fs.statSync(local).size > maxBytes) throw new Error('File too large');
+      return fs.readFileSync(local);
+    }
+    const entry = this.index.files[name];
+    if (!entry || !this.drive) throw new Error('File not found');
+    if (entry.size > maxBytes) throw new Error('File too large');
+    const cached = path.join(this.cacheDir, name);
+    if (entry.size <= CACHE_FILE_MAX) {
+      if (!fs.existsSync(cached)) {
+        if (!this.pending.has(name)) this.pending.set(name, this.fetchToCache(entry, cached).finally(() => this.pending.delete(name)));
+        await this.pending.get(name);
+      }
+      return fs.readFileSync(cached);
+    }
+    const up = await this.drive.download(entry.driveId);
+    if (!up.ok) throw new Error(`Drive download ${up.status}`);
+    return Buffer.from(await up.arrayBuffer());
+  }
+
   async fetchToCache(entry, dest) {
     const up = await this.drive.download(entry.driveId);
     if (!up.ok) throw new Error(`Drive download ${up.status}`);
