@@ -109,7 +109,8 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 | `TEAM_DOMAINS` | `littleunusual.co,littleunusual.com` | Email domains that are core team automatically |
 | `PUBLIC_URL` | *(none)* | The site's real address (e.g. `https://refs.littleunusual.co`). People who reach the app another way are sent there to sign in. |
 | `SHARE_URL` | *(none)* | Address share links are built on, e.g. `https://share.littleunusual.xyz`. It must point at the same app but **not** be behind Cloudflare Access, so clients can open links without signing in. Without it, links use the address the team is on (fine without Cloudflare). |
-| `SESSION_SECRET` | *(generated)* | Signs link visitors' cookies. If unset, a random secret is created once in `DATA_DIR/secret`. |
+| `SESSION_SECRET` | *(generated)* | Signs link visitors' cookies and connector consent forms. If unset, a random secret is created once in `DATA_DIR/secret`. |
+| `MCP_URL` | *(SHARE_URL)* | Optional: a different address for the Claude connector. It must not be behind Cloudflare Access. |
 | `MAX_UPLOAD_MB` | `500` | Per-file upload limit |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | *(none)* | Full contents of the service account's JSON key. With `GOOGLE_DRIVE_ID`, it turns on Google Drive storage. |
 | `GOOGLE_DRIVE_ID` | *(none)* | ID of the Shared Drive uploads go to |
@@ -137,6 +138,17 @@ docker run -p 3001:3001 -v reference-board-data:/data -e APP_PASSWORD=choose-one
 - **Inactive guests** lose their project and board access after the period set on the Admin page (default 60 days). Invites that were never used are removed too. The core team is never removed.
 - **Enforcement:** the server applies every rule to boards, files, uploads, live updates and board lists. A guest can't reach another project's boards or files by guessing links.
 - For invites to work without editing Cloudflare each time, the Cloudflare Access policy should let anyone sign in with a one-time PIN. The app then decides what each person can see.
+
+### Claude connector (MCP)
+
+Claude (claude.ai, the desktop app, Claude Code) and other apps that support MCP connectors can read and build boards. Each person connects their own Claude and it works **as them**: the same projects, boards and permissions they have in the app (a commenter's Claude can comment but not edit; a guest's Claude only sees their boards).
+
+- **Connect:** in Claude, open *Settings → Connectors → Add custom connector* and paste the connector address shown on the Admin page (e.g. `https://share.littleunusual.xyz/mcp`). Claude opens the Reference Board sign-in (the usual Cloudflare login) and a consent page; click **Allow**. On a Team or Enterprise plan an owner can add it once for everyone. Claude Code: `claude mcp add --transport http reference-board https://share.littleunusual.xyz/mcp`.
+- **What Claude can do:** list projects and boards, search, read a board (cards, lines, comments, sub-boards, notes for editors), create boards, add cards (text, headings, labels, links/embeds, images and GIFs from the web, videos, to-dos, tables, groups with cards inside), update, arrange and connect cards, delete cards (Claude asks first), comment and resolve, and add board notes. It can't delete boards or projects, or change sharing.
+- **Live:** changes appear for everyone with the board open, signed "Name (via Claude)".
+- **Admin:** the Admin page shows the connector address, setup warnings, and who has connected which app, with **Disconnect**. Removing a person also disconnects their apps.
+- **Setup:** the connector lives at `SHARE_URL` (or `MCP_URL`), which must not be behind Cloudflare Access, because Claude's servers call it. Sign-in happens on `PUBLIC_URL`, behind Access. Both must be set in Cloudflare mode.
+- **How it works:** MCP over Streamable HTTP (`/mcp`, JSON responses), OAuth 2.1 with PKCE, dynamic client registration and client ID metadata documents (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/*`). Tokens last an hour and refresh for 60 days; only their hashes are stored (`DATA_DIR/oauth.json`).
 
 ### Storage: local disk or Google Drive
 
@@ -169,6 +181,8 @@ server/
   visitors.js   share-link visitors (name + email, signed cookie)
   importer.js   fetches pasted/dropped web media (keeps GIFs animated)
   templates.js  saved templates (templates.json)
+  oauth.js      OAuth 2.1 for the Claude connector (registration, consent, tokens)
+  mcp.js        the MCP server: tools Claude uses to read and build boards
   permissions.js who can view/comment/edit which board; enforced in index.js
   seed.js       first-run example board
   demo.js       the large demo project (demo-assets.js generates its files; demo-cli.js = npm run demo)

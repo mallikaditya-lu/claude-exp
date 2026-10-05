@@ -1125,3 +1125,5 @@ body.is-resizing iframe { pointer-events: none; }
   .toolbar.dock { max-width: calc(100% - 24px); overflow-x: auto; }
   .dock .tool-icon { width: 36px; height: 36px; }
 }
+.mcp-url { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.mcp-url code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: 8px 10px; border-radius: 8px; background: var(--hover); font-size: 13px; }

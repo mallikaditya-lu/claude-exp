@@ -23,8 +23,10 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
   const [q, setQ] = useState('');
   const [newTeam, setNewTeam] = useState('');
 
+  const [mcp, setMcp] = useState<Awaited<ReturnType<typeof api.adminMcp>> | null>(null);
   const load = useCallback(() => {
     api.admin().then(setData).catch((err) => notify(err.message));
+    api.adminMcp().then(setMcp).catch(() => {});
   }, [notify]);
 
   useEffect(() => {
@@ -186,6 +188,44 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
             Anyone with a {data.teamDomains.map((d) => `@${d}`).join(' or ')} email is core team automatically.
             Invite freelancers and clients from a project’s or board’s <b>Share</b> button.
           </p>
+        </section>
+
+        <section className="admin-card">
+          <div className="admin-card-head">
+            <h2>Claude connector</h2>
+          </div>
+          <p>
+            Lets Claude (and other apps that support MCP connectors) read and build boards for whoever connects it,
+            with that person’s own access. In Claude: <b>Settings → Connectors → Add custom connector</b>, paste this address, then sign in.
+          </p>
+          {mcp && (
+            <>
+              <div className="mcp-url">
+                <code>{mcp.url}</code>
+                <button className="btn" onClick={() => navigator.clipboard?.writeText(mcp.url).then(() => notify('Connector address copied'))}>Copy</button>
+              </div>
+              {mcp.warnings.map((w) => <div key={w} className="form-error">{w}</div>)}
+              {mcp.connections.length ? (
+                <div className="people-wrap">
+                  <table className="people">
+                    <thead><tr><th>Person</th><th>App</th><th>Last used</th><th /></tr></thead>
+                    <tbody>
+                      {mcp.connections.map((c) => (
+                        <tr key={`${c.email}|${c.clientId}`}>
+                          <td><div className="person"><Avatar name={c.name || c.email || 'Team'} size={26} /><div><b>{c.name || c.email || 'Team'}</b><span>{c.email || ''}</span></div></div></td>
+                          <td>{c.clientName}</td>
+                          <td className="muted">{timeAgo(c.lastUsed)}</td>
+                          <td>
+                            <button className="text-btn" onClick={() => window.confirm(`Disconnect ${c.clientName} for ${c.name || c.email}? It will need to sign in again.`) && run(api.disconnectMcp(c.email, c.clientId), 'Disconnected')}>Disconnect</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="share-empty">No one has connected an app yet.</div>}
+            </>
+          )}
         </section>
 
         <section className="admin-card">
