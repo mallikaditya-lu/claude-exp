@@ -1587,6 +1587,25 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                     <span className="sep" />
                   </>
                 )}
+                {selItems.length > 0 && selItems.every((it) => it.type === 'link') && selItems.some((it) => it.description) && (() => {
+                  const hidden = selItems.every((it) => it.hideDesc || !it.description);
+                  return (
+                    <>
+                      <button
+                        className="text-btn"
+                        title={hidden ? 'Show the link’s description again' : 'Show only the title (hover it to read the description)'}
+                        onClick={() => change((b) => {
+                          const next = { ...b.items };
+                          for (const it of selItems) next[it.id] = { ...next[it.id], hideDesc: hidden ? undefined : true };
+                          return { ...b, items: next };
+                        })}
+                      >
+                        {hidden ? 'Show description' : 'Hide description'}
+                      </button>
+                      <span className="sep" />
+                    </>
+                  );
+                })()}
                 {single?.type === 'board' && single.boardId && (
                   <button className="text-btn strong" onClick={() => openBoard(single.boardId!)}>Open</button>
                 )}
