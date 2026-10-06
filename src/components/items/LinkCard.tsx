@@ -72,6 +72,38 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
 
   const note = <CardNote item={item} selected={selected} update={update} />;
 
+  // Posts on X: the usual preview card, but opening it shows the post (and plays its video)
+  // in the panel beside the board instead of a new tab.
+  if (embed?.kind === 'iframe' && embed.post && play) {
+    const title = item.title || 'Post on X';
+    const open = () => play({ title, provider: embed.provider, url: item.url, iframe: embed.src, post: true });
+    const playBtn = (
+      <button className="poster-play nodrag" title="Play here (opens beside the board)" onClick={open}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+      </button>
+    );
+    return (
+      <div className="link-card">
+        {item.thumb && (
+          <div className="link-thumb is-playable">
+            <img src={item.thumb} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+            {playBtn}
+          </div>
+        )}
+        <div className="link-body">
+          <button className="link-title as-button nodrag" onClick={open} title="Open beside the board">{title}</button>
+          {item.description && <div className="link-desc">{item.description}</div>}
+          <div className="link-meta">
+            <Favicon url={item.url} />
+            <div className="link-host grow">{item.siteName || hostname(item.url)}</div>
+            <a className="link-open nodrag" href={item.url} target="_blank" rel="noopener noreferrer" title="Open on X"><IconExternal size={14} /></a>
+          </div>
+        </div>
+        {note}
+      </div>
+    );
+  }
+
   // Video sites: a poster with a play button; playing opens the big player beside the board.
   if (embed?.kind === 'iframe' && PLAYER_PROVIDERS.includes(embed.provider) && play) {
     const poster = videoThumb(item.url) || item.thumb;
