@@ -43,6 +43,8 @@ export interface Item {
   text?: string;
   title?: string;
   description?: string;
+  /** Link cards: show only the title (the description stays as the title's tooltip). */
+  hideDesc?: boolean;
   url?: string;
   thumb?: string;
   siteName?: string;

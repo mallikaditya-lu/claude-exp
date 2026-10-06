@@ -91,8 +91,8 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
           </div>
         )}
         <div className="link-body">
-          <button className="link-title as-button nodrag" onClick={open} title="Open beside the board">{title}</button>
-          {item.description && <div className="link-desc">{item.description}</div>}
+          <button className="link-title as-button nodrag" onClick={open} title={item.hideDesc && item.description ? item.description : 'Open beside the board'}>{title}</button>
+          {item.description && !item.hideDesc && <div className="link-desc">{item.description}</div>}
           <div className="link-meta">
             <Favicon url={item.url} />
             <div className="link-host grow">{item.siteName || hostname(item.url)}</div>
@@ -186,8 +186,8 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
         </div>
       )}
       <div className="link-body">
-        <a className="link-title nodrag" href={item.url} target="_blank" rel="noopener noreferrer">{item.title || hostname(item.url)}</a>
-        {item.description && <div className="link-desc">{item.description}</div>}
+        <a className="link-title nodrag" href={item.url} target="_blank" rel="noopener noreferrer" title={item.hideDesc ? item.description : undefined}>{item.title || hostname(item.url)}</a>
+        {item.description && !item.hideDesc && <div className="link-desc">{item.description}</div>}
         <div className="link-meta">
           <Favicon url={item.url} />
           <div className="link-host grow">{item.siteName || hostname(item.url)}</div>
