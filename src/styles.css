@@ -1024,12 +1024,16 @@ kbd { font: inherit; font-size: 11.5px; padding: 1px 5px; border-radius: 4px; bo
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); pointer-events: none;
 }
 .poster-play {
-  position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%;
-  display: grid; place-items: center; color: #111; background: rgba(255, 255, 255, 0.92); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
-  transition: transform 0.12s, background 0.12s;
+  /* Frosted glass: reads on light and dark images alike. */
+  position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); border-radius: 50%;
+  display: grid; place-items: center; color: #fff;
+  background: rgba(20, 20, 28, 0.28); border: 1px solid rgba(255, 255, 255, 0.4);
+  -webkit-backdrop-filter: blur(12px) saturate(160%); backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 0.15s, background 0.15s;
 }
-.poster-play svg { margin-left: 3px; }
-.poster-play:hover { transform: scale(1.08); background: #fff; }
+.poster-play svg { width: 18px; height: 18px; margin-left: 2px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
+.poster-play:hover { transform: translate(-50%, -50%) scale(1.08); background: rgba(20, 20, 28, 0.42); }
 .poster-open { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, 0.35); opacity: 0; transition: opacity 0.12s; }
 .card:hover .poster-open { opacity: 1; }
 .card-note { padding: 8px 12px 10px; font-size: 0.93em; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
@@ -1061,8 +1065,6 @@ a.link-title:hover { text-decoration: underline; }
 .player-post { width: 100%; max-width: 560px; height: 100%; align-self: stretch; }
 .player-post iframe { width: 100%; height: 100%; border: 0; border-radius: 12px; background: #fff; }
 .link-thumb.is-playable { position: relative; }
-.link-thumb.is-playable .poster-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
-.link-thumb.is-playable .poster-play:hover { transform: translate(-50%, -50%) scale(1.08); }
 .link-title.as-button { background: none; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; }
 .link-open { color: var(--muted); display: inline-flex; padding: 2px; border-radius: 4px; }
 .link-open:hover { color: var(--text); background: var(--hover); }
