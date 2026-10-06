@@ -128,7 +128,7 @@ export function kindForMime(mime: string, name = ''): Item['type'] {
 
 // ---------- embeds ----------
 export type Embed =
-  | { kind: 'iframe'; src: string; aspect?: number; height?: number; provider: string }
+  | { kind: 'iframe'; src: string; aspect?: number; height?: number; provider: string; post?: boolean }
   | { kind: 'image' | 'video' | 'audio'; src: string; provider: string };
 
 /** A still image for a video link (YouTube has fixed thumbnail URLs; others come from the link preview). */
@@ -198,6 +198,11 @@ export function resolveEmbed(raw?: string): Embed | null {
   if (host === 'docs.google.com' && /^\/(document|spreadsheets|presentation)\/d\//.test(path)) {
     const src = u.href.replace(/\/(edit|view)([?#].*)?$/, '/preview');
     return { kind: 'iframe', src, aspect: 4 / 3, provider: 'Google Docs' };
+  }
+  // Posts on X (Twitter): X's own post embed, which plays videos and GIFs inside it.
+  if (['x.com', 'twitter.com', 'mobile.twitter.com', 'fxtwitter.com', 'vxtwitter.com', 'fixupx.com'].includes(host)) {
+    const id = path.match(/^\/(?:\w+|i(?:\/web)?)\/status(?:es)?\/(\d+)/)?.[1];
+    if (id) return { kind: 'iframe', src: `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`, height: 560, provider: 'X', post: true };
   }
   if (host === 'drive.google.com') {
     const fid = path.match(/\/file\/d\/([\w-]+)/)?.[1];

@@ -1058,6 +1058,14 @@ a.link-title:hover { text-decoration: underline; }
 .player-frame { width: 100%; max-height: 100%; position: relative; }
 .player-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 8px; }
 .player-video { width: 100%; max-height: 100%; border-radius: 8px; background: #000; }
+.player-post { width: 100%; max-width: 560px; height: 100%; align-self: stretch; }
+.player-post iframe { width: 100%; height: 100%; border: 0; border-radius: 12px; background: #fff; }
+.link-thumb.is-playable { position: relative; }
+.link-thumb.is-playable .poster-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.link-thumb.is-playable .poster-play:hover { transform: translate(-50%, -50%) scale(1.08); }
+.link-title.as-button { background: none; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+.link-open { color: var(--muted); display: inline-flex; padding: 2px; border-radius: 4px; }
+.link-open:hover { color: var(--text); background: var(--hover); }
 body.is-resizing, body.is-resizing * { cursor: ew-resize !important; user-select: none; }
 body.is-resizing iframe { pointer-events: none; }
 @media (max-width: 720px) { .player-panel { position: absolute; inset: 0; width: auto !important; z-index: 60; } }

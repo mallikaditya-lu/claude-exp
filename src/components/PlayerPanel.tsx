@@ -46,7 +46,11 @@ export function PlayerPanel({ media, onClose }: { media: PlayMedia; onClose: () 
         <button className="icon-btn" onClick={onClose} title="Close player (Esc)"><IconX size={16} /></button>
       </div>
       <div className="player-body">
-        {media.iframe ? (
+        {media.iframe && media.post ? (
+          <div className="player-post">
+            <iframe key={media.iframe} src={media.iframe} title={media.title} allow="autoplay; encrypted-media; fullscreen; picture-in-picture; clipboard-write" allowFullScreen />
+          </div>
+        ) : media.iframe ? (
           <div className="player-frame" style={{ aspectRatio: media.aspect || 16 / 9 }}>
             <iframe key={media.iframe} src={media.iframe} title={media.title} allow="autoplay; encrypted-media; fullscreen; picture-in-picture; clipboard-write" allowFullScreen />
           </div>
