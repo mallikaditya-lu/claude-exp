@@ -54,7 +54,8 @@ export function Editable({ value, editing, onChange, onDone, placeholder, plain,
         const el = e.currentTarget;
         onChange(plain ? el.innerText.replace(/\n+$/, '') : el.innerHTML);
       }}
-      onBlur={() => onDone?.()}
+      // Typing a size in the selection bar's size box keeps the note in editing mode.
+      onBlur={(e) => { if (!(e.relatedTarget as HTMLElement | null)?.closest?.('.font-size-box')) onDone?.(); }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' || (plain && e.key === 'Enter')) {
           e.preventDefault();

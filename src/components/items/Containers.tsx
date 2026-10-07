@@ -40,17 +40,51 @@ export function BoardCard({ item, editing, setEditing }: CardProps) {
 }
 
 /**
- * A group (stored as type 'column'): a titled area whose cards sit side by side in a grid.
- * Resizing the group resizes and reflows the cards inside; "Auto" fits as many columns as the width allows.
+ * A group (stored as type 'column'): a titled area for cards.
+ * Magnet on (default): the cards pack into columns like a masonry wall — each card goes into the
+ * shortest column, so a short image never leaves a hole beside a tall one. "Auto" fits as many
+ * columns as the width allows. Magnet off (`free`): cards stay exactly where they're put.
  */
 export function ColumnCard({ item, editing, update, setEditing }: CardProps) {
-  const { items, dropTarget, renderChild } = useCanvas();
+  const { items, dropTarget, renderChild, rects } = useCanvas();
   const children = (item.childIds || []).map((id) => items[id]).filter((c) => c && c.parentId === item.id);
   const drop = dropTarget?.col === item.id ? dropTarget.index : -1;
   const cols = groupCols(item);
 
+  let body: React.ReactNode;
+  if (item.free) {
+    // Tall enough for the lowest card (rotated cards count by their outline).
+    const bottom = Math.max(60, ...children.map((c) => c.y + (rects[c.id]?.h ?? 120) + 10));
+    body = (
+      <div className="column-body is-free" style={{ height: bottom }}>
+        {children.map((c) => <Fragment key={c.id}>{renderChild(c)}</Fragment>)}
+        {!children.length && <div className="column-empty">Drag cards here and put them anywhere</div>}
+      </div>
+    );
+  } else {
+    // Masonry: in order, each card (and the drop slot) goes into the currently shortest column.
+    const lanes: { h: number; nodes: React.ReactNode[] }[] = Array.from({ length: cols }, () => ({ h: 0, nodes: [] }));
+    const place = (node: React.ReactNode, h: number) => {
+      const lane = lanes.reduce((a, b) => (b.h < a.h - 0.5 ? b : a));
+      lane.nodes.push(node);
+      lane.h += h + 10;
+    };
+    children.forEach((c, i) => {
+      if (drop === i) place(<div key="drop" className="drop-slot" />, 64);
+      place(<Fragment key={c.id}>{renderChild(c)}</Fragment>, rects[c.id]?.h ?? 160);
+    });
+    if (drop === children.length) place(<div key="drop" className="drop-slot" />, 64);
+    body = (
+      <div className="column-body">
+        {children.length || drop >= 0
+          ? lanes.map((lane, i) => <div key={i} className="column-lane">{lane.nodes}</div>)
+          : <div className="column-empty">Drag cards here, or select cards and press ⌘G</div>}
+      </div>
+    );
+  }
+
   return (
-    <div className={`column ${drop >= 0 ? 'is-drop' : ''}`} style={{ ['--col' as string]: color(item.color, 'solid'), ['--cols' as string]: cols }}>
+    <div className={`column ${drop >= 0 ? 'is-drop' : ''} ${item.free ? 'is-free' : ''}`} style={{ ['--col' as string]: color(item.color, 'solid'), ['--cols' as string]: cols }}>
       <div className="column-head">
         {editing ? (
           <input
@@ -68,16 +102,7 @@ export function ColumnCard({ item, editing, update, setEditing }: CardProps) {
         )}
         <span className="column-count">{children.length}</span>
       </div>
-      <div className="column-body">
-        {children.map((c, i) => (
-          <Fragment key={c.id}>
-            {drop === i && <div className="drop-slot" />}
-            {renderChild(c)}
-          </Fragment>
-        ))}
-        {drop === children.length && <div className="drop-slot" />}
-        {!children.length && drop < 0 && <div className="column-empty">Drag cards here, or select cards and press ⌘G</div>}
-      </div>
+      {body}
     </div>
   );
 }

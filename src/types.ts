@@ -66,6 +66,14 @@ export interface Item {
   childIds?: string[];
   /** Groups (type 'column'): columns in the grid. 0 = auto (fits the width); unset = 1 (older columns). */
   cols?: number;
+  /** Groups: magnet off. Cards inside sit where they're put (x/y relative to the group's body) instead of auto-arranging. */
+  free?: boolean;
+  /** Rotation in degrees, clockwise, around the card's centre. */
+  rotation?: number;
+  /** Images and videos: the visible part, as fractions of the full picture; `ar` is the full picture's width / height. */
+  crop?: { x: number; y: number; w: number; h: number; ar: number };
+  flipX?: boolean;
+  flipY?: boolean;
   /** Text size in px for text cards (notes, headings, to-dos, tables). Unset = 14. */
   fontSize?: number;
   /** Text cards: heading levels (unset = normal text). The coloured 'heading' type is the Label style. */
