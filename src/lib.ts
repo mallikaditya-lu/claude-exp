@@ -84,10 +84,18 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+// Inline styles survive only as a text size (from the size box while editing a note).
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+  if (data.attrName !== 'style') return;
+  const m = /font-size:\s*(\d{1,3}(?:\.\d{1,3})?)(px|em)/.exec(data.attrValue);
+  if (m) data.attrValue = `font-size: ${m[1]}${m[2]}`;
+  else data.keepAttr = false;
+});
+
 export function sanitize(html: string | undefined) {
   return DOMPurify.sanitize(html || '', {
     ALLOWED_TAGS: ['b', 'i', 'u', 's', 'strike', 'strong', 'em', 'br', 'p', 'div', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'a', 'span', 'blockquote', 'code'],
-    ALLOWED_ATTR: ['href', 'target', 'rel'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'style'],
   });
 }
 

@@ -69,4 +69,9 @@ export const IconUsers = make(<><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0
 export const IconEye = make(<><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>);
 export const IconCheck = make(<><circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.7 2.7L16.2 9.5" /></>);
 export const IconTemplate = make(<><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><path d="M17 14v6M14 17h6" /></>);
+export const IconRotate = make(<><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></>);
+export const IconFlipH = make(<><path d="M12 3v18" strokeDasharray="2 2" /><path d="M9 7L4 17h5zM15 7l5 10h-5z" /></>);
+export const IconFlipV = make(<><path d="M3 12h18" strokeDasharray="2 2" /><path d="M7 9L17 4v5zM7 15l10 5v-5z" /></>);
+export const IconCrop = make(<><path d="M6 2v14a2 2 0 0 0 2 2h14" /><path d="M2 6h14a2 2 0 0 1 2 2v14" /></>);
+export const IconMagnet = make(<><path d="M6 3v8a6 6 0 0 0 12 0V3" /><path d="M6 7h4M14 7h4" /><path d="M10 3v8a2 2 0 0 0 4 0V3" /></>);
 export const IconExpand = make(<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />);

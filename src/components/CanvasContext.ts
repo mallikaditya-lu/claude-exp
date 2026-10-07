@@ -1,8 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import type { BoardSummary, Item } from '../types';
+import type { BoardSummary, Item, Rect } from '../types';
 
-/** Something to watch in the side player. */
-/** `post`: a social post (e.g. on X), shown full height rather than in a video frame. */
+/** Something to watch in the side player. `post`: a social post (e.g. on X), shown full height rather than in a video frame. */
 export interface PlayMedia { title: string; provider: string; url?: string; iframe?: string; video?: string; aspect?: number; post?: boolean }
 
 export interface CanvasCtx {
@@ -19,6 +18,12 @@ export interface CanvasCtx {
   openBoard: (id: string) => void;
   renameBoard: (id: string, title: string) => void;
   renderChild: (item: Item) => ReactNode;
+  /** Measured card sizes on the board (groups use them to pack their cards). */
+  rects: Record<string, Rect>;
+  /** The image or video being cropped, if any, and how to finish. */
+  cropping: string | null;
+  endCrop: () => void;
+  zoom: number;
 }
 
 export const CanvasContext = createContext<CanvasCtx | null>(null);

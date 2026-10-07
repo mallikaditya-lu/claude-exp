@@ -17,7 +17,7 @@ edits, presence and cursors live.
 | **Table** | Grid for scripts, shot lists and comparisons. Cells can hold images, GIFs, videos and links: paste or drop them into a cell (a line that is a media link shows the media; other links become chips). Drag header borders to resize columns; Tab moves to the next cell. |
 | **Comment** | Figma-style pins: press **M** (or the Comment tool) and click anywhere, or on a card (the pin then moves with the card). Click a pin to reply, resolve it, or edit or delete your own comments. The **Comments** panel on the right lists every thread, open or resolved, with an *Only yours* filter. |
 | **Board** | A nested board. Double-click to open it; breadcrumbs and the sidebar show the hierarchy. |
-| **Group** | A titled area whose cards sit side by side in a grid (1–4 columns, or **Auto**, which fits as many as the width allows). Drag either side edge to resize it and the cards inside reflow. Select cards and press **⌘G** to group them, **⇧⌘G** to ungroup; drag cards in and out. (Older "columns" are one-column groups.) |
+| **Group** | A titled area for cards. With the **magnet on** (*Auto-arrange*, the default) the cards pack into columns like a masonry wall: each card goes into the shortest column, so a short image never leaves a gap beside a tall one (1–4 columns, or **Auto**, which fits as many as the width allows). Turn the magnet off (*Free*) to place cards anywhere inside the group; they keep their spots, and snapping still lines them up. Drag either side edge to resize. Select cards and press **⌘G** to group them, **⇧⌘G** to ungroup; drag cards in and out. |
 | **Image / Video / Audio / File** | Upload via the toolbar, drag files from your desktop, or paste images. **GIFs and WebPs copied or dragged from a website stay animated** (the original file is fetched, not the still frame the browser puts on the clipboard), and pasted image/GIF links or Giphy/Tenor pages become images instead of link cards. Audio gets an inline player, video a native player, and PDFs and other files a download card. |
 | **Line** | FigJam-style connector between two cards: elbow, curved or straight, solid or dashed, three thicknesses, any colour, arrows at none/one/both ends, and an optional label. |
 
@@ -42,7 +42,11 @@ edits, presence and cursors live.
 - **Edit a line:** click it to open its toolbar (colour, thickness, text, dash, line type, arrows). Drag the end circles to re-attach them to another card or side. On elbow lines, every segment has a blue handle: the middle one moves the bend, and the end segments slide along their card (or step out past its edge). Double-click a handle to reset it.
 - **Select (like Figma):** drag on empty canvas to box-select. Shift-drag or shift-click adds to the selection.
 - **Navigate:** hold **Space** and drag, or drag with the **middle mouse button**, to pan. Scrolling with a trackpad or wheel also pans. ⌘/Ctrl + scroll or pinch to zoom. ⇧1 fits the board to the screen.
-- **Resize:** select a card and drag either side edge or the corner. Images, videos and links also have S/M/L/XL sizes in the selection bar, and notes, headings, to-dos and tables a text size (S to 2XL).
+- **Resize:** select a card and drag either side edge or the corner. Hold **K** or **⌥** while resizing to scale the text with the box (on a group: the text of everything inside it; in a free group the cards' sizes and places too). Images, videos and links also have S/M/L/XL sizes in the selection bar.
+- **Text size:** notes, headings, to-dos and tables have a size box in the selection bar, like Google Docs: type any size, use − / +, or pick a preset. While editing a note, select some words and use the same box to size just those words.
+- **Rotate:** select a card and drag just outside any corner (the cursor turns into a rotate arrow). Hold **⇧** for 15° steps; it also clicks to straight angles. The angle shows in the selection bar; click it to straighten.
+- **Images and videos:** **Crop** (drag the frame or its edges; Done, Enter or Esc applies, Cancel discards, *Full* shows everything), **Rotate 90°**, **Flip** horizontally or vertically, and **Reset**. Cropped videos play and pause on click.
+- **Snapping (smart guides):** while moving cards, they line up with other cards' edges and centres and match the spacing between neighbours, with pink guides. Hold **⇧** to move straight across or up and down, hold **⌘/Ctrl** to skip snapping for that move, or switch snapping off with the magnet button by the zoom controls. Resizing snaps the edge too.
 - **Copy between boards:** ⌘C / ⌘V copies cards, including the lines between them, into any board.
 
 | Shortcut | Action |
@@ -50,6 +54,10 @@ edits, presence and cursors live.
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | Space + drag / middle-drag | Pan |
 | ⌘D / Alt-drag | Duplicate |
+| ⇧ while dragging | Move straight (horizontal or vertical) |
+| ⌘/Ctrl while dragging | Don't snap this move |
+| K or ⌥ while resizing | Scale the text with the box |
+| ⇧ while rotating | 15° steps |
 | ⌘G / ⇧⌘G | Group / ungroup |
 | ⇧A | Add menu at the cursor |
 | M | Comment mode |

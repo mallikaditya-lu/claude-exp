@@ -12,9 +12,12 @@ import { QuickAdd, type QuickPick, type TemplateSummary } from './QuickAdd';
 import { ASSET_MIME, AssetsPanel, askName, assetKind } from './AssetsPanel';
 import { NOTE_MIME } from './NotesPanel';
 import type { Asset } from '../api';
+import { FontSizeBox } from './FontSizeBox';
+import { snapEdge, snapMove, type Guide } from '../snap';
 import {
   IconBold, IconCopy, IconExternal, IconFit, IconFront, IconH, IconItalic, IconLink, IconList, IconMinus, IconOList,
-  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment, IconTemplate,
+  IconPlus, IconStrike, IconTrash, IconUnderline, IconEdit, IconComment, IconTemplate, IconRotate, IconFlipH, IconFlipV,
+  IconCrop, IconMagnet,
 } from './icons';
 
 interface Props {
@@ -54,7 +57,10 @@ function htmlToPlain(html = '') {
   d.innerHTML = html.replace(/<\/(p|div|h\d|li)>/gi, '\n');
   return (d.textContent || '').replace(/\n+/g, ' ').trim();
 }
-const TEXT_SIZES: [string, number][] = [['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['2XL', 34]];
+const SNAP_PX = 6; // snap distance on screen
+const rad = (deg = 0) => (deg * Math.PI) / 180;
+/** Normalise an angle to -180…180 (and drop -0). */
+const normDeg = (d: number) => { const n = ((((d + 180) % 360) + 360) % 360) - 180; return Math.abs(n) < 0.05 ? 0 : Math.round(n * 10) / 10; };
 const MEDIA_SIZED: ItemType[] = ['image', 'video', 'link', 'audio', 'file'];
 const MEDIA_SIZES: [string, number][] = [['S', 220], ['M', 380], ['L', 620], ['XL', 960]];
 
@@ -141,6 +147,15 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   const [uploads, setUploads] = useState<Record<string, number>>({});
   const [cursors, setCursors] = useState<Record<string, { name: string; x: number; y: number; at: number }>>({});
   const cascade = useRef(0);
+  // Smart guides while moving or resizing; the magnet in the zoom bar turns snapping off.
+  const [guides, setGuides] = useState<Guide[]>([]);
+  const [snapOn, setSnapOn] = useState(() => { try { return localStorage.getItem('rb-snap') !== 'off'; } catch { return true; } });
+  const snapRef = useRef(snapOn);
+  snapRef.current = snapOn;
+  // Hold K (or ⌥) while resizing to scale the text with the box.
+  const scaleKey = useRef(false);
+  const [angle, setAngle] = useState<{ x: number; y: number; deg: number } | null>(null);
+  const [cropId, setCropId] = useState<string | null>(null);
 
   const items = board.items;
   const selectionRef = useRef(selection);
@@ -734,6 +749,98 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     setSelection(new Set(released));
   }, [change, getBoard]);
 
+  // ---------- snapping ----------
+  /** Other cards' boxes to snap to (everything but the moving cards and what's inside them). */
+  const snapTargets = useCallback((moving: string[]) => {
+    const b = getBoard();
+    const skip = new Set(moving);
+    for (const id of moving) b?.items[id]?.childIds?.forEach((c) => skip.add(c));
+    return Object.entries(rectsRef.current).filter(([id]) => !skip.has(id)).map(([, r]) => r);
+  }, [getBoard]);
+
+  /** Top-left of a group's card area, in board units (cards in a free group are placed relative to it). */
+  const groupOrigin = useCallback((gid: string) => {
+    const el = worldRef.current?.querySelector<HTMLElement>(`[data-item-id="${gid}"] > .column > .column-body`);
+    if (!el) { const r = rectsRef.current[gid]; return { x: (r?.x ?? 0) + 9, y: (r?.y ?? 0) + 44 }; }
+    const r = el.getBoundingClientRect();
+    return toWorld(r.left, r.top);
+  }, [toWorld]);
+
+  /** Magnet on ↔ off for a group. Turning it off keeps every card exactly where it is. */
+  const toggleMagnet = useCallback((g: Item) => {
+    if (!g.free) {
+      const o = groupOrigin(g.id);
+      change((b) => {
+        const next = { ...b.items };
+        for (const cid of g.childIds || []) {
+          const r = rectsRef.current[cid];
+          if (!next[cid] || !r) continue;
+          next[cid] = { ...next[cid], x: Math.round(r.x - o.x), y: Math.round(r.y - o.y), w: Math.round(r.w) };
+        }
+        next[g.id] = { ...next[g.id], free: true };
+        return { ...b, items: next };
+      });
+      return;
+    }
+    // Back to auto-arrange, in the order the cards sit now (top to bottom, left to right).
+    change((b) => {
+      const next = { ...b.items };
+      const order = (g.childIds || []).filter((id) => next[id])
+        .sort((a, c) => (Math.round(next[a].y / 40) - Math.round(next[c].y / 40)) || (next[a].x - next[c].x));
+      next[g.id] = { ...next[g.id], free: undefined, childIds: order };
+      for (const id of order) next[id] = { ...next[id], rotation: undefined };
+      return { ...b, items: next };
+    });
+  }, [change, groupOrigin]);
+
+  // Cropping ends when the picture is no longer selected (the crop is kept).
+  useEffect(() => { if (cropId && !selection.has(cropId)) setCropId(null); }, [cropId, selection]);
+
+  // ---------- text size of selected words (while editing a note) ----------
+  const savedRange = useRef<Range | null>(null);
+  const [inlineSize, setInlineSize] = useState<number | null>(null);
+  const editableEl = useCallback(() => (editing ? worldRef.current?.querySelector<HTMLElement>(`[data-item-id="${editing}"] .editable`) || null : null), [editing]);
+  useEffect(() => {
+    if (!editing) return;
+    const on = () => {
+      const sel = window.getSelection();
+      const el = editableEl();
+      if (!sel?.rangeCount || !el) return;
+      const r = sel.getRangeAt(0);
+      if (!el.contains(r.commonAncestorContainer)) return;
+      savedRange.current = r.cloneRange();
+      const node = r.startContainer.nodeType === 1 ? r.startContainer as Element : r.startContainer.parentElement;
+      setInlineSize(node ? Math.round(parseFloat(getComputedStyle(node).fontSize)) : null);
+    };
+    document.addEventListener('selectionchange', on);
+    return () => { document.removeEventListener('selectionchange', on); savedRange.current = null; };
+  }, [editing, editableEl]);
+
+  /** Size the selected words (relative to the card's size, so scaling the card scales them too). */
+  const applyInlineSize = useCallback((px: number) => {
+    const el = editableEl();
+    const it = editing ? getBoard()?.items[editing] : null;
+    const r = savedRange.current;
+    if (!el || !it) return;
+    if (!r || r.collapsed) { updateItem(it.id, { fontSize: px === 14 ? undefined : px }); el.focus(); return; }
+    el.focus();
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand('styleWithCSS', false, 'false');
+    document.execCommand('fontSize', false, '7');
+    const base = it.fontSize ?? 14;
+    el.querySelectorAll('font[size="7"]').forEach((f) => {
+      const span = document.createElement('span');
+      span.style.fontSize = `${+(px / base).toFixed(3)}em`;
+      span.append(...f.childNodes);
+      span.querySelectorAll<HTMLElement>('[style]').forEach((x) => x.style.removeProperty('font-size'));
+      f.replaceWith(span);
+    });
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    setInlineSize(px);
+  }, [editableEl, editing, getBoard, updateItem]);
+
   const duplicate = useCallback(() => {
     const data = collectSelection();
     if (data?.items.length) insertClones(data.items, data.connections, { x: 32, y: 32 });
@@ -792,6 +899,14 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const key = `drag-${uid()}`;
     let moved = false;
     let origins: Record<string, { x: number; y: number }> = {};
+    // The moving cards' outline when the drag started, and what they can snap to.
+    const startRects = ids.map((id) => rectsRef.current[id]).filter(Boolean);
+    const box0: Rect | null = startRects.length ? (() => {
+      const x0 = Math.min(...startRects.map((r) => r.x));
+      const y0 = Math.min(...startRects.map((r) => r.y));
+      return { x: x0, y: y0, w: Math.max(...startRects.map((r) => r.x + r.w)) - x0, h: Math.max(...startRects.map((r) => r.y + r.h)) - y0 };
+    })() : null;
+    let targets: Rect[] = [];
     // Any cards except groups can be dropped into a group, several at once.
     const canDrop = ids.every((id) => b0.items[id]?.type !== 'column');
 
@@ -820,16 +935,37 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
             const r = rectsRef.current[item.id];
             const col = next[item.parentId!];
             next[col.id] = { ...col, childIds: (col.childIds || []).filter((x) => x !== item.id) };
-            next[item.id] = { ...next[item.id], parentId: null, x: r?.x ?? start.x, y: r?.y ?? start.y, w: Math.round(r?.w ?? item.w) };
+            if (col.free) {
+              const o = groupOrigin(col.id);
+              next[item.id] = { ...next[item.id], parentId: null, x: Math.round(o.x + item.x), y: Math.round(o.y + item.y) };
+            } else {
+              next[item.id] = { ...next[item.id], parentId: null, x: r?.x ?? start.x, y: r?.y ?? start.y, w: Math.round(r?.w ?? item.w), rotation: undefined };
+            }
           }
           for (const id of ids) next[id] = { ...next[id], z: ++z };
           origins = Object.fromEntries(ids.map((id) => [id, { x: next[id].x, y: next[id].y }]));
           return { ...b, items: next };
         }, key);
+        // Copies (Alt-drag) snap to their originals too.
+        targets = snapTargets(dup ? ids : [...ids, item.id]);
       }
       const p = toWorld(ev.clientX, ev.clientY);
-      const dx = p.x - start.x;
-      const dy = p.y - start.y;
+      let dx = p.x - start.x;
+      let dy = p.y - start.y;
+      // Shift: move straight across or straight up/down.
+      const lock = ev.shiftKey ? (Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y') : null;
+      if (lock === 'x') dy = 0;
+      if (lock === 'y') dx = 0;
+      // Smart guides: line up with other cards' edges and centres, or match their spacing.
+      // ⌘/Ctrl while dragging skips snapping for this move.
+      let shown: Guide[] = [];
+      if (box0 && snapRef.current && !(ev.metaKey || ev.ctrlKey)) {
+        const s = snapMove({ ...box0, x: box0.x + dx, y: box0.y + dy }, targets, SNAP_PX / viewRef.current.zoom);
+        if (lock !== 'y') dx += s.dx;
+        if (lock !== 'x') dy += s.dy;
+        if (!lock) shown = s.guides;
+      }
+      setGuides(shown);
       change((b) => {
         const next = { ...b.items };
         for (const id of ids) if (next[id]) next[id] = { ...next[id], x: Math.round(origins[id].x + dx), y: Math.round(origins[id].y + dy) };
@@ -844,12 +980,11 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           const r = rectsRef.current[col.id];
           if (!r || p.x < r.x || p.x > r.x + r.w || p.y < r.y - 10 || p.y > r.y + r.h + 10) continue;
           const kids = (col.childIds || []).filter((c) => !ids.includes(c) && rectsRef.current[c]);
-          // Reading order in the grid: rows above the pointer, then cards to its left in the same row.
-          const index = kids.filter((c) => {
-            const cr = rectsRef.current[c];
-            if (cr.y + cr.h < p.y) return true;
-            return cr.y <= p.y && cr.x + cr.w / 2 < p.x;
-          }).length;
+          // Masonry: in the column (lane) under the pointer, before the first card whose middle is
+          // below it, or after that lane's last card.
+          const lane = kids.filter((c) => { const cr = rectsRef.current[c]; return p.x >= cr.x - 5 && p.x <= cr.x + cr.w + 5; });
+          const below = lane.find((c) => { const cr = rectsRef.current[c]; return cr.y + cr.h / 2 > p.y; });
+          const index = below ? kids.indexOf(below) : lane.length ? kids.indexOf(lane[lane.length - 1]) + 1 : kids.length;
           target = { col: col.id, index };
           break;
         }
@@ -867,7 +1002,21 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       const t = dropRef.current;
       dropRef.current = null;
       setDropTarget(null);
-      if (moved && t) {
+      setGuides([]);
+      if (moved && t && getBoard()?.items[t.col]?.free) {
+        // Magnet off: the cards stay exactly where they were dropped inside the group.
+        const o = groupOrigin(t.col);
+        change((b) => {
+          const col = b.items[t.col];
+          if (!col) return b;
+          const moving = ids.filter((id) => b.items[id]);
+          const next = { ...b.items, [col.id]: { ...col, childIds: [...(col.childIds || []).filter((x) => !moving.includes(x)), ...moving] } };
+          // Kept inside the group's width (the group grows downwards as needed).
+          for (const id of moving) next[id] = { ...next[id], parentId: col.id, x: Math.round(clamp(next[id].x - o.x, 0, Math.max(0, col.w - 18 - next[id].w))), y: Math.max(0, Math.round(next[id].y - o.y)) };
+          return { ...b, items: next };
+        }, key);
+        setSelection(new Set(ids));
+      } else if (moved && t) {
         change((b) => {
           const col = b.items[t.col];
           if (!col) return b;
@@ -893,23 +1042,96 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     else if (canEdit && EDITABLE.includes(item.type)) setEditingId(item.id);
   };
 
-  /** Resize from the right edge/corner, or from the left edge (which also moves the card). */
+  /**
+   * Resize from the right edge/corner, or from the left edge (which also moves the card).
+   * Hold K or ⌥ to scale the text with the box (for a group: the text of everything in it, and in
+   * a free group the cards' sizes and places too). Edges snap to other cards.
+   */
   const startResize = (e: React.PointerEvent, item: Item, side: 'left' | 'right' = 'right') => {
     e.stopPropagation();
     e.preventDefault();
     const sx = e.clientX;
+    const sy = e.clientY;
     const w0 = item.w;
     const x0 = item.x;
     const key = `resize-${uid()}`;
     const min = MIN_W[item.type] ?? 160;
+    const turn = rad(item.rotation);
+    const b0 = getBoard()!;
+    const kids = (item.childIds || []).map((id) => b0.items[id]).filter(Boolean);
+    const inGroup = isInColumn(item, b0.items);
+    const r0 = rectsRef.current[item.id];
+    const targets = !inGroup && !item.rotation ? snapTargets([item.id]) : [];
     setDragging(true);
     const onMove = (ev: PointerEvent) => {
-      const d = (ev.clientX - sx) / viewRef.current.zoom;
-      const w = Math.round(clamp(side === 'left' ? w0 - d : w0 + d, min, 4000));
-      updateItem(item.id, side === 'left' ? { w, x: Math.round(x0 + w0 - w) } : { w }, key);
+      // Along the card's own x axis, so rotated cards resize the way they point.
+      const d = ((ev.clientX - sx) * Math.cos(turn) + (ev.clientY - sy) * Math.sin(turn)) / viewRef.current.zoom;
+      let w = clamp(side === 'left' ? w0 - d : w0 + d, min, 4000);
+      let shown: Guide[] = [];
+      if (r0 && targets.length && snapRef.current && !(ev.metaKey || ev.ctrlKey)) {
+        const edge = side === 'left' ? x0 + w0 - w : x0 + w;
+        const s = snapEdge(edge, r0.y, r0.y + r0.h, targets, SNAP_PX / viewRef.current.zoom);
+        if (s.guides.length) { w = clamp(side === 'left' ? x0 + w0 - s.x : s.x - x0, min, 4000); shown = s.guides; }
+      }
+      setGuides(shown);
+      w = Math.round(w);
+      const f = w / w0;
+      const scaling = ev.altKey || scaleKey.current;
+      const fs = (it: Item) => (scaling ? clamp(Math.round((it.fontSize ?? 14) * f * 10) / 10, 6, 400) : it.fontSize);
+      change((b) => {
+        const next = { ...b.items };
+        if (!next[item.id]) return b;
+        next[item.id] = { ...next[item.id], w, ...(side === 'left' ? { x: Math.round(x0 + w0 - w) } : {}), fontSize: fs(item) === 14 ? undefined : fs(item) };
+        for (const k of kids) {
+          if (!next[k.id]) continue;
+          const size = fs(k);
+          next[k.id] = {
+            ...next[k.id],
+            fontSize: size === 14 ? undefined : size,
+            // In a free group the cards keep their layout, scaled.
+            ...(item.free && scaling ? { x: Math.round(k.x * f), y: Math.round(k.y * f), w: Math.round(k.w * f) } : {}),
+          };
+        }
+        return { ...b, items: next };
+      }, key);
     };
     const onUp = () => {
       setDragging(false);
+      setGuides([]);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  /** Rotate around the card's centre (Figma-style corner zones). Shift snaps to 15°; it also clicks to 0/90/180/270. */
+  const startRotate = (e: React.PointerEvent, item: Item) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const r = rectsRef.current[item.id];
+    if (!r) return;
+    const c = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    const p0 = toWorld(e.clientX, e.clientY);
+    const a0 = Math.atan2(p0.y - c.y, p0.x - c.x);
+    const rot0 = item.rotation || 0;
+    const key = `rotate-${uid()}`;
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      let deg = normDeg(rot0 + ((Math.atan2(p.y - c.y, p.x - c.x) - a0) * 180) / Math.PI);
+      if (ev.shiftKey) deg = normDeg(Math.round(deg / 15) * 15);
+      else {
+        const right = Math.round(deg / 90) * 90;
+        if (Math.abs(deg - right) < 3) deg = normDeg(right);
+      }
+      updateItem(item.id, { rotation: deg || undefined }, key);
+      const root = rootRef.current!.getBoundingClientRect();
+      setAngle({ x: ev.clientX - root.left + 14, y: ev.clientY - root.top + 14, deg });
+    };
+    const onUp = () => {
+      setDragging(false);
+      setAngle(null);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -1059,17 +1281,19 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
   // Hold space to pan.
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      if (e.code === 'KeyK' && !isTyping(e.target)) scaleKey.current = true;
       if (e.code !== 'Space' || isTyping(e.target)) return;
       e.preventDefault();
       if (!spaceRef.current) { spaceRef.current = true; setSpaceHeld(true); }
     };
     const up = (e: KeyboardEvent) => {
+      if (e.code === 'KeyK') scaleKey.current = false;
       if (e.code !== 'Space') return;
       if (!isTyping(e.target)) e.preventDefault();
       spaceRef.current = false;
       setSpaceHeld(false);
     };
-    const reset = () => { spaceRef.current = false; setSpaceHeld(false); };
+    const reset = () => { spaceRef.current = false; setSpaceHeld(false); scaleKey.current = false; };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', reset);
@@ -1173,6 +1397,7 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
       if (mod && key === 'y' && !typing) { e.preventDefault(); redo(); return; }
       if (typing) return;
       if (document.querySelector('.modal')) return;
+      if (key === 'escape' && cropId) { setCropId(null); return; }
       if (key === 'escape') {
         setSelection(new Set()); setSelConn(null); setLineMode(false); setLineFrom(null);
         setCommentUi?.((u) => (u.draft ? { ...u, draft: null } : u.openId ? { ...u, openId: null } : { ...u, mode: false }));
@@ -1255,16 +1480,23 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     const selected = selection.has(item.id);
     const isEditing = editing === item.id;
     const single = selected && selection.size === 1;
+    // Cards in a free group (magnet off) are placed like free cards, inside the group.
+    const freeChild = inColumn && Boolean(items[item.parentId!]?.free);
+    const placed = !inColumn || freeChild;
+    const cropping = cropId === item.id;
+    const turn = placed && item.rotation ? `rotate(${item.rotation}deg)` : undefined;
+    const size = item.fontSize ? { fontSize: item.fontSize } : {};
+    const handles = canEdit && placed && !dragging && !cropping;
     return (
       <div
         key={item.id}
         data-item-id={item.id}
         className={[
           'card', `card-${item.type}`,
-          selected && 'is-selected', isEditing && 'is-editing', inColumn && 'in-column',
-          lineFrom === item.id && 'is-line-source',
+          selected && 'is-selected', isEditing && 'is-editing', inColumn && 'in-column', freeChild && 'in-free',
+          lineFrom === item.id && 'is-line-source', cropping && 'is-cropping',
         ].filter(Boolean).join(' ')}
-        style={inColumn ? (item.fontSize ? { fontSize: item.fontSize } : undefined) : { left: item.x, top: item.y, width: item.w, zIndex: item.z, ...(item.fontSize ? { fontSize: item.fontSize } : {}) }}
+        style={placed ? { left: item.x, top: item.y, width: item.w, zIndex: item.z, transform: turn, ...size } : size}
         onPointerDown={(e) => onItemPointerDown(e, item)}
         onDoubleClick={(e) => onItemDoubleClick(e, item)}
       >
@@ -1275,16 +1507,19 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           update={(partial, key) => updateItem(item.id, partial, key)}
           setEditing={(on) => setEditing(item.id, on)}
         />
-        {canEdit && single && !inColumn && !dragging && (
-          <div className="resize-handle" title="Drag to resize" onPointerDown={(e) => startResize(e, item)} />
+        {handles && single && (
+          <div className="resize-handle" title="Drag to resize · hold K or ⌥ to scale the text too" onPointerDown={(e) => startResize(e, item)} />
         )}
-        {canEdit && !inColumn && !dragging && (item.type === 'column' || single) && (
+        {handles && (item.type === 'column' || single) && (
           <>
-            <div className="edge-handle is-left" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'left')} />
-            <div className="edge-handle is-right" title="Drag to resize the group" onPointerDown={(e) => startResize(e, item, 'right')} />
+            <div className="edge-handle is-left" title="Drag to resize · hold K or ⌥ to scale the text too" onPointerDown={(e) => startResize(e, item, 'left')} />
+            <div className="edge-handle is-right" title="Drag to resize · hold K or ⌥ to scale the text too" onPointerDown={(e) => startResize(e, item, 'right')} />
           </>
         )}
-        {canEdit && single && !dragging && !isEditing && SIDES.map((side) => (
+        {handles && single && !isEditing && (['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+          <div key={c} className={`rotate-zone is-${c}`} title="Drag to rotate · ⇧ for 15° steps" onPointerDown={(e) => startRotate(e, item)} />
+        ))}
+        {canEdit && single && !dragging && !isEditing && !cropping && SIDES.map((side) => (
           <div
             key={side}
             className={`connect-handle is-${side}`}
@@ -1309,6 +1544,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
     openBoard,
     renameBoard: (id, title) => { api.patchBoard(id, { title }).catch((err) => notify(err.message)); },
     renderChild: (child) => renderCard(child, true),
+    rects,
+    cropping: cropId,
+    endCrop: () => setCropId(null),
+    zoom: view.zoom,
   };
 
   const free = Object.values(items).filter((it) => !isInColumn(it, items)).sort((a, b) => a.z - b.z);
@@ -1445,6 +1684,13 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
               ))}
             </>
           )}
+          {guides.map((g, i) => (g.label ? (
+            <div key={i} className={`guide-gap ${g.y1 === g.y2 ? 'is-h' : 'is-v'}`} style={{ left: Math.min(g.x1, g.x2), top: Math.min(g.y1, g.y2), width: Math.abs(g.x2 - g.x1), height: Math.abs(g.y2 - g.y1), ['--z' as string]: view.zoom }}>
+              <span style={{ transform: `translate(-50%, -50%) scale(${1 / view.zoom})` }}>{g.label}</span>
+            </div>
+          ) : (
+            <div key={i} className="guide" style={{ left: g.x1, top: g.y1, width: g.x2 - g.x1, height: g.y2 - g.y1, ['--z' as string]: view.zoom }} />
+          )))}
           {marquee && <div className="marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
           {Object.entries(cursors).map(([id, c]) => (
             <div key={id} className="cursor" style={{ transform: `translate(${c.x}px, ${c.y}px) scale(${1 / view.zoom})` }}>
@@ -1477,6 +1723,8 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           >
             {editingItem?.type === 'note' ? (
               <>
+                <FontSizeBox value={inlineSize} title="Size of the selected text (px)" onPick={applyInlineSize} />
+                <span className="sep" />
                 <button className="icon-btn" title="Bold (⌘B)" onMouseDown={exec('bold')}><IconBold size={16} /></button>
                 <button className="icon-btn" title="Italic (⌘I)" onMouseDown={exec('italic')}><IconItalic size={16} /></button>
                 <button className="icon-btn" title="Underline (⌘U)" onMouseDown={exec('underline')}><IconUnderline size={16} /></button>
@@ -1520,6 +1768,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 )}
                 {single?.type === 'column' && (
                   <>
+                    <button
+                      className={`text-btn magnet-btn ${single.free ? '' : 'is-on'}`}
+                      title={single.free ? 'Magnet off: cards stay where you put them. Click to auto-arrange them again.' : 'Magnet on: cards pack into tidy columns. Click to place them freely.'}
+                      onClick={() => toggleMagnet(single)}
+                    >
+                      <IconMagnet size={15} /> {single.free ? 'Free' : 'Auto-arrange'}
+                    </button>
+                  </>
+                )}
+                {single?.type === 'column' && !single.free && (
+                  <>
                     <span className="bar-label">Columns</span>
                     <div className="seg compact">
                       {[0, 1, 2, 3, 4].map((n) => (
@@ -1533,6 +1792,10 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                         </button>
                       ))}
                     </div>
+                  </>
+                )}
+                {single?.type === 'column' && (
+                  <>
                     <button className="text-btn" title="Ungroup (⇧⌘G)" onClick={ungroupSelection}>Ungroup</button>
                     <span className="sep" />
                   </>
@@ -1556,26 +1819,42 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
                 )}
                 {selItems.length > 0 && selItems.every((it) => TEXT_SIZED.includes(it.type)) && (
                   <>
-                    <span className="bar-label">Text</span>
-                    <div className="seg compact">
-                      {TEXT_SIZES.map(([label, px]) => (
-                        <button
-                          key={label}
-                          className={(selItems[0].fontSize ?? 14) === px ? 'is-on' : ''}
-                          title={`${px}px`}
-                          onClick={() => change((b) => {
-                            const next = { ...b.items };
-                            for (const it of selItems) next[it.id] = { ...next[it.id], fontSize: px === 14 ? undefined : px };
-                            return { ...b, items: next };
-                          })}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <FontSizeBox
+                      value={selItems.every((it) => (it.fontSize ?? 14) === (selItems[0].fontSize ?? 14)) ? Math.round(selItems[0].fontSize ?? 14) : null}
+                      title="Text size (px) · or hold K while resizing to scale it with the card"
+                      onPick={(px) => change((b) => {
+                        const next = { ...b.items };
+                        for (const it of selItems) next[it.id] = { ...next[it.id], fontSize: px === 14 ? undefined : px };
+                        return { ...b, items: next };
+                      })}
+                    />
                     <span className="sep" />
                   </>
                 )}
+                {single && (single.type === 'image' || single.type === 'video') && single.url && !isInColumn(single, items) && (
+                  <>
+                    <button className={`icon-btn ${cropId === single.id ? 'is-on' : ''}`} title="Crop" onClick={() => setCropId((c) => (c === single.id ? null : single.id))}><IconCrop size={16} /></button>
+                    <button className="icon-btn" title="Rotate 90°" onClick={() => updateItem(single.id, { rotation: normDeg((single.rotation || 0) + 90) || undefined })}><IconRotate size={16} /></button>
+                    <button className="icon-btn" title="Flip horizontally" onClick={() => updateItem(single.id, { flipX: single.flipX ? undefined : true })}><IconFlipH size={16} /></button>
+                    <button className="icon-btn" title="Flip vertically" onClick={() => updateItem(single.id, { flipY: single.flipY ? undefined : true })}><IconFlipV size={16} /></button>
+                    {(single.crop || single.flipX || single.flipY) && (
+                      <button className="text-btn" title="Undo crop and flips" onClick={() => {
+                        const c = single.crop;
+                        // Back to the full picture, keeping the card where the cropped part was.
+                        const full = c ? Math.round(single.w / c.w) : single.w;
+                        updateItem(single.id, { crop: undefined, flipX: undefined, flipY: undefined, w: full, ...(c ? { x: Math.round(single.x - c.x * full), y: Math.round(single.y - (c.y * full) / c.ar) } : {}) });
+                        setCropId(null);
+                      }}>Reset</button>
+                    )}
+                    <span className="sep" />
+                  </>
+                )}
+                {single?.rotation ? (
+                  <>
+                    <button className="text-btn" title="Straighten (back to 0°)" onClick={() => updateItem(single.id, { rotation: undefined })}>{Math.round(single.rotation)}° ✕</button>
+                    <span className="sep" />
+                  </>
+                ) : null}
                 {single && MEDIA_SIZED.includes(single.type) && !isInColumn(single, items) && (
                   <>
                     <span className="bar-label">Size</span>
@@ -1699,7 +1978,17 @@ export function Canvas({ board, change: rawChange, undo, redo, getBoard, boards,
           <button className="zoom-level" title="Reset to 100% (⌘0)" onClick={() => setView((v) => ({ ...v, zoom: 1 }))}>{Math.round(view.zoom * 100)}%</button>
           <button className="icon-btn" title="Zoom in (⌘+)" onClick={() => zoomCenter(1.2)}><IconPlus size={16} /></button>
           <button className="icon-btn" title="Fit to screen (⇧1)" onClick={fit}><IconFit size={16} /></button>
+          {canEdit && (
+            <button
+              className={`icon-btn ${snapOn ? 'is-on' : ''}`}
+              title={snapOn ? 'Snapping on: cards line up with each other while you move them (hold ⌘/Ctrl to skip, ⇧ to move straight). Click to turn off.' : 'Snapping off. Click to turn on.'}
+              onClick={() => setSnapOn((on) => { try { localStorage.setItem('rb-snap', on ? 'off' : 'on'); } catch { /* storage unavailable */ } return !on; })}
+            >
+              <IconMagnet size={16} />
+            </button>
+          )}
         </div>
+        {angle && <div className="angle-badge" style={{ left: angle.x, top: angle.y }}>{Math.round(angle.deg)}°</div>}
       </div>
 
       {canEdit && <Toolbar onTool={(t) => applyTool(t)} lineMode={lineMode} commentMode={commentMode} assetsOpen={assetsOpen} onAssets={() => setAssetsOpen((o) => !o)} position={dock} onPosition={setDock} />}
