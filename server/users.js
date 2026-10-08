@@ -43,7 +43,9 @@ export class Users {
     this.settingsFile = path.join(dataDir, 'settings.json');
     this.users = readJson(this.file, {});
     // inactiveDays: guests not seen for this long lose their project access (0 = never).
+    // ai: who may use Claude inside boards (admins always can), and the monthly spending cap in US$.
     this.settings = { inactiveDays: 60, ...readJson(this.settingsFile, {}) };
+    this.settings.ai = { cap: 50, allTeam: false, people: [], ...(this.settings.ai || {}) };
   }
 
   save() {
@@ -109,6 +111,19 @@ export class Users {
       const d = Number(patch.inactiveDays);
       if (!Number.isFinite(d) || d < 0 || d > 3650) throw new Error('inactiveDays must be 0–3650');
       this.settings.inactiveDays = Math.round(d);
+    }
+    if (patch.ai) {
+      const ai = { ...this.settings.ai };
+      if (patch.ai.cap !== undefined) {
+        const c = Number(patch.ai.cap);
+        if (!Number.isFinite(c) || c < 0 || c > 100000) throw new Error('The monthly cap must be a number of dollars');
+        ai.cap = Math.round(c * 100) / 100;
+      }
+      if (patch.ai.allTeam !== undefined) ai.allTeam = Boolean(patch.ai.allTeam);
+      if (Array.isArray(patch.ai.people)) {
+        ai.people = [...new Set(patch.ai.people.map((e) => String(e).trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))].slice(0, 500);
+      }
+      this.settings.ai = ai;
     }
     writeJson(this.settingsFile, this.settings);
     return this.settings;

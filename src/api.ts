@@ -29,6 +29,34 @@ export interface Session {
   publicUrl: string;
   /** False when share links can't work yet (Cloudflare mode without SHARE_URL). */
   shareLinks?: boolean;
+  /** Claude in boards: set when this person may use it (`enabled`: the server has an API key). */
+  ai?: { enabled: boolean } | null;
+}
+
+/** A document kept as a board's context (research Claude reads with the board). */
+export interface ContextDoc {
+  id: string; title: string; kind: 'text' | 'file'; url?: string; name?: string; mime?: string; size: number;
+  chars?: number; preview?: string; by: string; at: number; board: { id: string; title: string }; own: boolean;
+}
+
+export interface AiChatSummary { id: string; title: string; byName: string; by: string | null; createdAt: number; updatedAt: number; running: boolean; cost: number }
+export type AiLogEntry =
+  | { role: 'user'; text: string; by: string; at: number }
+  | { role: 'assistant'; text: string; at: number }
+  | { role: 'tool'; name: string; label: string; error?: string; at: number }
+  | { role: 'error'; text: string; at: number };
+export interface AiChat extends AiChatSummary { log: AiLogEntry[] }
+export type AiEvent =
+  | { t: 'chat'; id: string; title: string }
+  | { t: 'text'; d: string }
+  | { t: 'tool'; name: string; label: string }
+  | { t: 'tool_done'; name: string; ok: boolean; error?: string }
+  | { t: 'error'; message: string }
+  | { t: 'done'; cost?: number; spend?: number; cap?: number };
+export interface AiAdmin {
+  enabled: boolean; model: string; month: string; spend: number; cap: number; allTeam: boolean;
+  people: { email: string; name: string | null; spend: number }[];
+  usage: { email: string; name: string | null; spend: number }[];
 }
 
 /** What someone opening a share link gets told about it. */
@@ -151,6 +179,48 @@ export const api = {
     edit: (boardId: string, id: string, fields: { text?: string; color?: string }) =>
       req<BoardNote>(`/api/boards/${boardId}/notes/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
     remove: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/notes/${id}`, { method: 'DELETE' }),
+  },
+  context: {
+    list: (boardId: string) => req<ContextDoc[]>(`/api/boards/${boardId}/context`),
+    get: (boardId: string, id: string) => req<ContextDoc & { text: string | null }>(`/api/boards/${boardId}/context/${id}`),
+    addText: (boardId: string, title: string, text: string) => req<ContextDoc>(`/api/boards/${boardId}/context`, { method: 'POST', body: JSON.stringify({ title, text }) }),
+    addFile: (boardId: string, f: { url: string; name: string; mime: string; size: number }) => req<ContextDoc>(`/api/boards/${boardId}/context`, { method: 'POST', body: JSON.stringify(f) }),
+    remove: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/context/${id}`, { method: 'DELETE' }),
+  },
+  ai: {
+    info: (boardId: string) => req<{ enabled: boolean; model: string; chats: AiChatSummary[]; spend: number; cap: number }>(`/api/boards/${boardId}/ai`),
+    chat: (boardId: string, id: string) => req<AiChat>(`/api/boards/${boardId}/ai/chats/${id}`),
+    remove: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/ai/chats/${id}`, { method: 'DELETE' }),
+    stop: (boardId: string, id: string) => req<{ ok: boolean }>(`/api/boards/${boardId}/ai/chats/${id}/stop`, { method: 'POST' }),
+    admin: () => req<AiAdmin>('/api/admin/ai'),
+    setAdmin: (patch: { cap?: number; allTeam?: boolean; people?: string[] }) => req<{ ok: boolean }>('/api/admin/ai', { method: 'PATCH', body: JSON.stringify(patch) }),
+    /** Send a message; `onEvent` gets the reply as it streams. Resolves when Claude is done. */
+    async send(boardId: string, chatId: string | null, text: string, onEvent: (e: AiEvent) => void) {
+      const res = await fetch(`/api/boards/${boardId}/ai/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-client-id': clientId, 'x-user-name': encodeURIComponent(actorName) },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      });
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || res.statusText);
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+          if (line) { try { onEvent(JSON.parse(line.slice(6))); } catch { /* ignore malformed */ } }
+        }
+      }
+    },
   },
   projectImages: (id: string) => req<{ url: string; name: string; boardTitle: string }[]>(`/api/projects/${id}/images`),
   trash: () => req<TrashData>('/api/trash'),

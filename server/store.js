@@ -158,6 +158,37 @@ export class Store {
     this.persist(boardId);
   }
 
+  // ---------- context: research and documents Claude reads with the board ----------
+  // board.context: [{ id, title, kind: 'text' | 'file', text?, url?, name?, mime?, size, by, byEmail, at }]
+  // Boards inside a board see its context too (see contextFor).
+  addContext(boardId, doc) {
+    const board = this.boards.get(boardId);
+    if (!board) return null;
+    board.context = [...(board.context || []), doc].slice(-100);
+    board.contextVersion = (board.contextVersion || 0) + 1;
+    this.persist(boardId);
+    return doc;
+  }
+
+  removeContext(boardId, docId) {
+    const board = this.boards.get(boardId);
+    if (!board?.context?.some((d) => d.id === docId)) return false;
+    board.context = board.context.filter((d) => d.id !== docId);
+    board.contextVersion = (board.contextVersion || 0) + 1;
+    this.persist(boardId);
+    return true;
+  }
+
+  /** A board's context and its parents' (nearest first), each with the board it belongs to. */
+  contextFor(boardId) {
+    const out = [];
+    const b = this.boards.get(boardId);
+    for (const x of b ? [b, ...this.ancestors(b.id)] : []) {
+      for (const d of x.context || []) out.push({ ...d, board: { id: x.id, title: x.title } });
+    }
+    return out;
+  }
+
   // ---------- board notes (editors' scratchpad, shown beside the canvas) ----------
   saveNote(boardId, note) {
     const board = this.boards.get(boardId);
@@ -221,6 +252,7 @@ export class Store {
         connections: structuredClone(b.connections),
         threads: {},
         assets: structuredClone(b.assets || []),
+        context: structuredClone(b.context || []),
         version: 1,
         createdAt: now,
         updatedAt: now,

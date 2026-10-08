@@ -99,6 +99,37 @@ export function sanitize(html: string | undefined) {
   });
 }
 
+/** Markdown from Claude (headings, lists, bold/italic, code, links, tables of pipes kept as text) → safe HTML. */
+export function markdownToHtml(md: string) {
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = (t: string) => esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  const out: string[] = [];
+  let list: 'ul' | 'ol' | null = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of md.replace(/\r/g, '').split('\n')) {
+    const line = raw.trimEnd();
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const ul = /^\s*[-*•]\s+(.*)$/.exec(line);
+    const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    if (h) { close(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (ul || ol) {
+      const kind = ul ? 'ul' : 'ol';
+      if (list !== kind) { close(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inline((ul || ol)![1])}</li>`);
+      continue;
+    }
+    close();
+    if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  close();
+  return sanitize(out.join(''));
+}
+
 export function textToHtml(text: string) {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return text.split(/\n/).map((l) => `<p>${esc(l) || '<br>'}</p>`).join('');

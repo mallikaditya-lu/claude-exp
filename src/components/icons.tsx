@@ -74,4 +74,7 @@ export const IconFlipH = make(<><path d="M12 3v18" strokeDasharray="2 2" /><path
 export const IconFlipV = make(<><path d="M3 12h18" strokeDasharray="2 2" /><path d="M7 9L17 4v5zM7 15l10 5v-5z" /></>);
 export const IconCrop = make(<><path d="M6 2v14a2 2 0 0 0 2 2h14" /><path d="M2 6h14a2 2 0 0 1 2 2v14" /></>);
 export const IconMagnet = make(<><path d="M6 3v8a6 6 0 0 0 12 0V3" /><path d="M6 7h4M14 7h4" /><path d="M10 3v8a2 2 0 0 0 4 0V3" /></>);
+export const IconSparkle = make(<><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z" /><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" /></>);
+export const IconSend = make(<path d="M4 12l16-8-6 16-2.5-6.5z" />);
+export const IconStop = make(<rect x="6.5" y="6.5" width="11" height="11" rx="2" />, true);
 export const IconExpand = make(<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />);
