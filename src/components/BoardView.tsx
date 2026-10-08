@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clientId } from '../api';
-import { BACKGROUNDS, background, color } from '../lib';
+import { BACKGROUNDS, background, color, markdownToHtml, maxZ, uid } from '../lib';
 import type { BoardSummary, Project } from '../types';
 import { useBoard } from '../useBoard';
 import { Canvas } from './Canvas';
 import { CommentsPanel, useCommentActions, useCommentUi, type Identity } from './Comments';
 import { NotesPanel } from './NotesPanel';
+import { ClaudePanel } from './ClaudePanel';
 import { PlayerPanel } from './PlayerPanel';
 import type { PlayMedia } from './CanvasContext';
 import { Avatar } from './items/TextCards';
-import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconUndo, IconX } from './icons';
+import { IconChevron, IconComment, IconNote, IconPalette, IconRedo, IconShare, IconSidebar, IconSparkle, IconUndo, IconX } from './icons';
 
 interface Props {
   boardId: string;
@@ -25,11 +26,15 @@ interface Props {
   toggleSidebar: () => void;
   isTeam: boolean;
   onShare: (boardId: string) => void;
+  /** Claude in boards: set when this person may use it. */
+  ai?: { enabled: boolean } | null;
 }
+
+type SideTab = 'comments' | 'notes' | 'claude';
 
 const STATUS_LABEL = { loading: 'Loading…', saved: 'Saved', saving: 'Saving…', offline: 'Offline — retrying', missing: '' };
 
-export function BoardView({ boardId, boards, projects, me, myEmail, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare }: Props) {
+export function BoardView({ boardId, boards, projects, me, myEmail, go, goProject, notify, sidebarOpen, toggleSidebar, isTeam, onShare, ai }: Props) {
   const { board, status, presence, change, undo, redo, getBoard, applyServerPatch } = useBoard(boardId);
   const [guestShare, setGuestShare] = useState(false);
   const [playing, setPlaying] = useState<PlayMedia | null>(null);
@@ -57,16 +62,16 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
   const canEdit = access === 'manage' || access === 'edit';
   const openCount = Object.values(board?.threads || {}).filter((t) => !t.resolved).length;
   const noteCount = Object.keys(board?.notes || {}).length;
-  // One column on the right: Comments or Notes (notes are for editors only).
-  const [tab, setTabState] = useState<'comments' | 'notes'>(() => {
-    try { return localStorage.getItem('rb-side-tab') === 'notes' ? 'notes' : 'comments'; } catch { return 'comments'; }
+  // One column on the right: Comments, Notes (editors only) or Claude (people it's switched on for).
+  const [tab, setTabState] = useState<SideTab>(() => {
+    try { const t = localStorage.getItem('rb-side-tab'); return t === 'notes' || t === 'claude' ? t : 'comments'; } catch { return 'comments'; }
   });
-  const setTab = (t: 'comments' | 'notes') => {
+  const setTab = (t: SideTab) => {
     setTabState(t);
     try { localStorage.setItem('rb-side-tab', t); } catch { /* storage unavailable */ }
   };
-  const side = canEdit ? tab : 'comments';
-  const toggleSide = (t: 'comments' | 'notes') => {
+  const side: SideTab = tab === 'claude' && ai ? 'claude' : tab === 'notes' && canEdit ? 'notes' : 'comments';
+  const toggleSide = (t: SideTab) => {
     if (comments.panel && side === t) { setComments((u) => ({ ...u, panel: false })); return; }
     setTab(t);
     setComments((u) => ({ ...u, panel: true }));
@@ -75,16 +80,28 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
   useEffect(() => {
     if (comments.mode || comments.openId) setTabState('comments');
   }, [comments.mode, comments.openId]);
-  const tabs = canEdit ? (
+  const tabs = canEdit || ai ? (
     <div className="panel-tabs">
       <button className={side === 'comments' ? 'is-on' : ''} onClick={() => setTab('comments')}>
         Comments{openCount ? <span className="badge-inline">{openCount}</span> : null}
       </button>
-      <button className={side === 'notes' ? 'is-on' : ''} onClick={() => setTab('notes')}>
-        Notes{noteCount ? <span className="badge-inline">{noteCount}</span> : null}
-      </button>
+      {canEdit && (
+        <button className={side === 'notes' ? 'is-on' : ''} onClick={() => setTab('notes')}>
+          Notes{noteCount ? <span className="badge-inline">{noteCount}</span> : null}
+        </button>
+      )}
+      {ai && <button className={side === 'claude' ? 'is-on' : ''} onClick={() => setTab('claude')}>Claude</button>}
     </div>
   ) : undefined;
+
+  /** A Claude reply as a text card, to the right of everything on the board. */
+  const addToBoard = (md: string) => change((b) => {
+    const all = Object.values(b.items).filter((it) => !it.parentId);
+    const x = all.length ? Math.max(...all.map((it) => it.x + it.w)) + 60 : 100;
+    const y = all.length ? Math.min(...all.map((it) => it.y)) : 100;
+    const id = uid();
+    return { ...b, items: { ...b.items, [id]: { id, type: 'note', x: Math.round(x), y: Math.round(y), w: 420, z: maxZ(b.items) + 1, text: markdownToHtml(md), createdBy: `${me} (via Claude)`, createdAt: Date.now() } } };
+  });
 
   if (status === 'missing') {
     return (
@@ -167,6 +184,15 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
             {noteCount > 0 && <span className="badge is-quiet">{noteCount}</span>}
           </button>
         )}
+        {ai && (
+          <button
+            className={`icon-btn comments-toggle claude-toggle ${comments.panel && side === 'claude' ? 'is-on' : ''}`}
+            title="Claude: ask about this board, or have Claude build on it"
+            onClick={() => toggleSide('claude')}
+          >
+            <IconSparkle size={17} />
+          </button>
+        )}
         {canEdit && <button className="icon-btn" title="Undo (⌘Z)" onClick={undo}><IconUndo size={17} /></button>}
         {canEdit && <button className="icon-btn" title="Redo (⇧⌘Z)" onClick={redo}><IconRedo size={17} /></button>}
         <button
@@ -237,6 +263,18 @@ export function BoardView({ boardId, boards, projects, me, myEmail, go, goProjec
       </div>
       {playing && <PlayerPanel media={playing} onClose={() => setPlaying(null)} />}
       {comments.panel && side === 'comments' && <CommentsPanel board={board} access={access} ui={comments} setUi={setComments} me={identity} actions={actions} title={tabs} />}
+      {comments.panel && side === 'claude' && board && ai && (
+        <ClaudePanel
+          boardId={board.id}
+          canEdit={canEdit}
+          enabled={ai.enabled}
+          myEmail={myEmail || undefined}
+          title={tabs}
+          notify={notify}
+          onClose={() => setComments((u) => ({ ...u, panel: false }))}
+          onAddToBoard={(md) => { addToBoard(md); notify('Added to the board, to the right of everything'); }}
+        />
+      )}
       {comments.panel && side === 'notes' && board && (
         <NotesPanel board={board} applyServerPatch={applyServerPatch} notify={notify} title={tabs} onClose={() => setComments((u) => ({ ...u, panel: false }))} />
       )}

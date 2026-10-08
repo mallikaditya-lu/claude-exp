@@ -19,6 +19,8 @@ import { importMedia } from './importer.js';
 import { Templates } from './templates.js';
 import { OAuth, validRedirect } from './oauth.js';
 import { createMcp } from './mcp.js';
+import { Agent } from './agent.js';
+import { MAX_CONTEXT_CHARS, contextMeta, contextText, fileKind } from './context.js';
 import { Thumbs } from './thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -146,6 +148,8 @@ app.get('/api/session', async (req, res) => {
     role: user?.role || null,
     publicUrl: PUBLIC_URL,
     shareLinks: Boolean(SHARE_URL) || AUTH_MODE !== 'cloudflare',
+    // Claude in boards: on for this person, and whether the server has an API key.
+    ai: Boolean(user) && perms.canUseAi(user) ? { enabled: agent.enabled } : null,
   });
 });
 
@@ -231,6 +235,13 @@ const mcp = createMcp({
   },
   sendNotes: (boardId, patch) => sendNotes(boardId, patch),
   indexChanged: () => scheduleIndexBroadcast(),
+  contextChanged: (boardId) => broadcast(boardId, { t: 'context', boardId }),
+});
+
+// Claude inside the app (the Claude panel beside a board). Needs ANTHROPIC_API_KEY.
+const agent = new Agent({
+  dataDir: DATA_DIR, store, perms, users, mcp, files, appUrl,
+  onChange: (boardId) => broadcast(boardId, { t: 'ai', boardId }),
 });
 
 // Claude and other clients call these from servers and browsers.
@@ -662,6 +673,32 @@ app.get('/api/admin', needAdmin, (_req, res) => {
   });
 });
 
+// Claude in boards: set up or not, this month's spend against the cap, and who may use it.
+app.get('/api/admin/ai', needAdmin, (_req, res) => {
+  const m = new Date().toISOString().slice(0, 7);
+  const spentBy = agent.usage[m]?.people || {};
+  const ai = users.settings.ai;
+  res.json({
+    enabled: agent.enabled,
+    model: agent.model,
+    month: m,
+    spend: Math.round(agent.spend() * 100) / 100,
+    cap: ai.cap,
+    allTeam: ai.allTeam,
+    people: ai.people.map((email) => ({ email, name: users.get(email)?.name || null, spend: Math.round((spentBy[email] || 0) * 100) / 100 })),
+    usage: Object.entries(spentBy).map(([email, usd]) => ({ email, name: users.get(email)?.name || null, spend: Math.round(usd * 100) / 100 })).sort((a, b) => b.spend - a.spend),
+  });
+});
+
+app.patch('/api/admin/ai', needAdmin, (req, res) => {
+  try {
+    users.updateSettings({ ai: req.body || {} });
+    res.json({ ok: true, ai: users.settings.ai });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // The Claude connector: its address, whether it's set up, and who has connected which app.
 app.get('/api/admin/mcp', needAdmin, (req, res) => {
   const warnings = [];
@@ -726,7 +763,7 @@ app.get('/api/boards/:id', (req, res) => {
   // Same answer for "missing" and "not yours", so board ids can't be probed.
   if (!board || !perms.can(req.user, board, 'view')) return res.status(404).json({ error: 'Board not found' });
   // Invites and the secret link are only for the Share dialog; assets have their own endpoint.
-  const { members: _m, share: _s, assets: _a, notes, ...rest } = board;
+  const { members: _m, share: _s, assets: _a, context: _c, notes, ...rest } = board;
   const access = perms.boardLevel(req.user, board);
   // Notes are the editors' scratchpad: clients and viewers never get them.
   res.json({ ...rest, ...(atLeast(access, 'edit') ? { notes: notes || {} } : {}), access });
@@ -752,6 +789,128 @@ app.post('/api/boards/:id/patch', (req, res) => {
   broadcast(req.params.id, { t: 'patch', boardId: req.params.id, patch: result.patch, version: result.board.version }, origin);
   scheduleIndexBroadcast();
   res.json({ version: result.board.version });
+});
+
+// ---------- context: research and documents Claude reads with the board ----------
+// Anyone who can see the board sees its context list; editors add and remove documents.
+const viewableBoard = (req, res, needed = 'view') => {
+  const board = store.get(req.params.id);
+  const level = perms.boardLevel(req.user, board);
+  if (!board || !level) { res.status(404).json({ error: 'Board not found' }); return null; }
+  if (!atLeast(level, needed)) { res.status(403).json({ error: needed === 'edit' ? 'Only editors can change this board’s context' : 'Not allowed' }); return null; }
+  return board;
+};
+
+app.get('/api/boards/:id/context', (req, res) => {
+  const board = viewableBoard(req, res);
+  if (board) res.json(store.contextFor(board.id).map((d) => ({ ...contextMeta(d), board: d.board, own: d.board.id === board.id })));
+});
+
+app.get('/api/boards/:id/context/:cid', async (req, res) => {
+  const board = viewableBoard(req, res);
+  if (!board) return;
+  const doc = store.contextFor(board.id).find((d) => d.id === req.params.cid);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  try {
+    res.json({ ...contextMeta(doc), text: await contextText(doc, files) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/boards/:id/context', (req, res) => {
+  const board = viewableBoard(req, res, 'edit');
+  if (!board) return;
+  const by = actor(req).name || req.user.email || 'Someone';
+  const { title, text, url, name, mime, size } = req.body || {};
+  let doc;
+  if (typeof text === 'string') {
+    if (!text.trim()) return res.status(400).json({ error: 'Paste some text first' });
+    if (text.length > MAX_CONTEXT_CHARS) return res.status(400).json({ error: `That’s ${text.length.toLocaleString()} characters; the limit is ${MAX_CONTEXT_CHARS.toLocaleString()} per document. Split it into several.` });
+    doc = { kind: 'text', title: String(title || text.trim().split('\n')[0] || 'Notes').slice(0, 200), text, size: text.length };
+  } else if (typeof url === 'string' && url.startsWith('/uploads/')) {
+    if (!fileKind(name, mime)) return res.status(400).json({ error: 'Claude can read text, Markdown, CSV, JSON, HTML and PDF files' });
+    doc = { kind: 'file', title: String(title || name || 'Document').slice(0, 200), url, name: String(name || '').slice(0, 200), mime: String(mime || '').slice(0, 100), size: Number(size) || 0 };
+  } else {
+    return res.status(400).json({ error: 'Send text, or an uploaded file' });
+  }
+  const saved = store.addContext(board.id, { id: crypto.randomUUID(), ...doc, by, byEmail: req.user.email || null, at: Date.now() });
+  broadcast(board.id, { t: 'context', boardId: board.id });
+  res.status(201).json(contextMeta(saved));
+});
+
+app.delete('/api/boards/:id/context/:cid', (req, res) => {
+  const board = viewableBoard(req, res, 'edit');
+  if (!board) return;
+  if (!store.removeContext(board.id, req.params.cid)) return res.status(404).json({ error: 'Not found (context from a parent board is removed there)' });
+  broadcast(board.id, { t: 'context', boardId: board.id });
+  res.json({ ok: true });
+});
+
+// ---------- Claude in the board ----------
+// People the Admin page allows; Claude acts as them, with their access to the board.
+const aiBoard = (req, res) => {
+  const board = viewableBoard(req, res);
+  if (!board) return null;
+  if (!perms.canUseAi(req.user)) { res.status(403).json({ error: 'Claude in boards isn’t switched on for you. Ask an admin.' }); return null; }
+  return board;
+};
+
+app.get('/api/boards/:id/ai', (req, res) => {
+  const board = aiBoard(req, res);
+  if (!board) return;
+  res.json({ enabled: agent.enabled, model: agent.model, chats: agent.list(board.id), spend: Math.round(agent.spend() * 100) / 100, cap: agent.cap() });
+});
+
+app.get('/api/boards/:id/ai/chats/:cid', (req, res) => {
+  const board = aiBoard(req, res);
+  if (!board) return;
+  const chat = agent.get(board.id, req.params.cid);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+  res.json({ id: chat.id, title: chat.title, byName: chat.byName, by: chat.by, createdAt: chat.createdAt, updatedAt: chat.updatedAt, log: chat.log, running: agent.running.has(chat.id), cost: chat.cost || 0 });
+});
+
+app.delete('/api/boards/:id/ai/chats/:cid', (req, res) => {
+  const board = aiBoard(req, res);
+  if (!board) return;
+  const chat = agent.get(board.id, req.params.cid);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+  // Your own chats, or any chat on a board you manage.
+  if (chat.by !== (req.user.email || null) && perms.boardLevel(req.user, board) !== 'manage') return res.status(403).json({ error: 'Only the person who started this chat can delete it' });
+  agent.remove(board.id, chat.id);
+  broadcast(board.id, { t: 'ai', boardId: board.id });
+  res.json({ ok: true });
+});
+
+app.post('/api/boards/:id/ai/chats/:cid/stop', (req, res) => {
+  const board = aiBoard(req, res);
+  if (!board) return;
+  agent.stop(req.params.cid);
+  res.json({ ok: true });
+});
+
+// Send a message; the reply streams back as server-sent events. Closing the page doesn't stop
+// Claude (the work carries on and is saved); the Stop button does.
+app.post('/api/boards/:id/ai/chat', async (req, res) => {
+  const board = aiBoard(req, res);
+  if (!board) return;
+  if (!agent.enabled) return res.status(503).json({ error: 'Claude isn’t set up yet: an admin needs to add the Anthropic API key (ANTHROPIC_API_KEY).' });
+  const text = String(req.body?.text || '').trim().slice(0, 30000);
+  if (!text) return res.status(400).json({ error: 'Type a message first' });
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive' });
+  let open = true;
+  res.on('close', () => { open = false; });
+  const send = (obj) => { if (open) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+  const ping = setInterval(() => { if (open) res.write(': ping\n\n'); }, 15000);
+  try {
+    await agent.run({ board, user: actor(req), chatId: req.body?.chat_id || null, text, send });
+  } catch (err) {
+    send({ t: 'error', message: err.message });
+    send({ t: 'done' });
+  } finally {
+    clearInterval(ping);
+    if (open) res.end();
+  }
 });
 
 // ---------- assets: every file uploaded or imported to a board (the Assets panel) ----------

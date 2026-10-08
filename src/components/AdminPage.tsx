@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, socket, type AdminData, type AdminPerson } from '../api';
+import { api, socket, type AdminData, type AdminPerson, type AiAdmin } from '../api';
 import { timeAgo } from '../lib';
 import type { GlobalRole } from '../types';
 import { Avatar } from './items/TextCards';
@@ -190,6 +190,8 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
           </p>
         </section>
 
+        <AiSection notify={notify} />
+
         <section className="admin-card">
           <div className="admin-card-head">
             <h2>Claude connector</h2>
@@ -279,5 +281,74 @@ export function AdminPage({ notify, onOpenProject, sidebarOpen, toggleSidebar }:
         </section>
       </div>
     </div>
+  );
+}
+
+/** Claude in boards: who may use it, the monthly cap, and this month's spending. */
+function AiSection({ notify }: { notify: (msg: string) => void }) {
+  const [ai, setAi] = useState<AiAdmin | null>(null);
+  const [email, setEmail] = useState('');
+  const [cap, setCap] = useState('');
+  const load = useCallback(() => { api.ai.admin().then((a) => { setAi(a); setCap(String(a.cap)); }).catch(() => {}); }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!ai) return null;
+  const save = (patch: Parameters<typeof api.ai.setAdmin>[0], msg: string) => api.ai.setAdmin(patch).then(() => { notify(msg); load(); }).catch((err) => notify(err.message));
+  const pct = ai.cap > 0 ? Math.min(100, (ai.spend / ai.cap) * 100) : 100;
+
+  return (
+    <section className="admin-card">
+      <div className="admin-card-head">
+        <h2>Claude in boards</h2>
+        <span className={`pill ${ai.enabled ? 'is-ok' : 'is-warn'}`}>{ai.enabled ? 'On' : 'API key missing'}</span>
+      </div>
+      <p>
+        A Claude panel beside every board: people ask about the board and its context, and Claude builds on the board as them,
+        with their access. Uses Little Unusual’s Anthropic API key ({ai.model}).
+      </p>
+      {!ai.enabled && <div className="form-error">Add <code>ANTHROPIC_API_KEY</code> to the app’s variables on Railway (never paste it in chat or commit it), then redeploy.</div>}
+
+      <div className="ai-spend">
+        <div className="ai-spend-bar"><div style={{ width: `${pct}%` }} className={pct >= 90 ? 'is-high' : ''} /></div>
+        <span><b>${ai.spend.toFixed(2)}</b> of ${ai.cap} used in {ai.month}</span>
+        <form className="ai-cap" onSubmit={(e) => { e.preventDefault(); save({ cap: Number(cap) }, 'Monthly cap saved'); }}>
+          <label>Monthly cap $ <input value={cap} inputMode="decimal" onChange={(e) => setCap(e.target.value.replace(/[^\d.]/g, ''))} /></label>
+          <button className="btn small" type="submit" disabled={Number(cap) === ai.cap}>Save</button>
+        </form>
+      </div>
+      <p className="admin-note">When the cap is reached, Claude stops answering until next month (or until you raise it).</p>
+
+      <h3 className="ai-h3">Who can use it</h3>
+      <label className="check-row">
+        <input type="checkbox" checked={ai.allTeam} onChange={(e) => save({ allTeam: e.target.checked }, e.target.checked ? 'Everyone on the core team can use Claude' : 'Only the people listed can use Claude')} />
+        <span>Everyone on the core team<small>Otherwise only admins and the people below.</small></span>
+      </label>
+      <form className="invite-row" onSubmit={(e) => {
+        e.preventDefault();
+        const add = email.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+        if (add.length) save({ people: [...ai.people.map((p) => p.email), ...add] }, `${add.length === 1 ? add[0] : `${add.length} people`} can now use Claude`).then(() => setEmail(''));
+      }}>
+        <input value={email} placeholder="Give access by email, separated by commas" onChange={(e) => setEmail(e.target.value)} />
+        <button className="btn" type="submit" disabled={!email.trim()}>Give access</button>
+      </form>
+      {ai.people.length > 0 && (
+        <div className="people-wrap">
+          <table className="people">
+            <thead><tr><th>Person</th><th>This month</th><th /></tr></thead>
+            <tbody>
+              {ai.people.map((p) => (
+                <tr key={p.email}>
+                  <td><div className="person"><Avatar name={p.name || p.email} size={26} /><div><b>{p.name || p.email}</b><span>{p.name ? p.email : 'hasn’t signed in yet'}</span></div></div></td>
+                  <td className="muted">${p.spend.toFixed(2)}</td>
+                  <td><button className="text-btn" onClick={() => save({ people: ai.people.map((x) => x.email).filter((x) => x !== p.email) }, `${p.email} can no longer use Claude`)}>Remove</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {ai.usage.length > 0 && (
+        <p className="admin-note">Spending this month: {ai.usage.map((u) => `${u.name || u.email} $${u.spend.toFixed(2)}`).join(' · ')}</p>
+      )}
+    </section>
   );
 }

@@ -45,6 +45,18 @@ export class Permissions {
     return this.role(user) === 'admin';
   }
 
+  /**
+   * May this person use Claude inside boards? Admins always; otherwise people the admin page lists,
+   * or the whole core team when that's switched on. Never link visitors.
+   */
+  canUseAi(user) {
+    if (!user || user.visitor) return false;
+    if (this.isAdmin(user) || (this.role(user) === 'team' && !user.email)) return true;
+    const ai = this.users.settings.ai || {};
+    if (ai.allTeam && this.isTeam(user)) return true;
+    return Boolean(user.email) && (ai.people || []).includes(user.email);
+  }
+
   /** Admins see every project and board. So does password/open mode, which has no emails to invite. */
   seesAll(user) {
     return this.isAdmin(user) || (this.role(user) === 'team' && !user.email);
@@ -161,6 +173,8 @@ export class Permissions {
       if (b.cover === url) return true;
       // Files once added to the board (the Assets panel keeps them after their card is deleted).
       if (b.assets?.some((a) => a.url === url)) return true;
+      // Documents kept as the board's context (for Claude).
+      if (b.context?.some((d) => d.url === url)) return true;
     }
     return false;
   }

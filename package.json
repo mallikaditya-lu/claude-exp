@@ -16,6 +16,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "dompurify": "^3.4.16",
     "express": "^5.2.1",
     "jpeg-js": "^0.4.4",

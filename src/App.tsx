@@ -198,6 +198,7 @@ export default function App() {
             notify={notify}
             isTeam={isTeam}
             onShare={setShareBoardId}
+            ai={session.ai || null}
             sidebarOpen={sidebar}
             toggleSidebar={() => setSidebar((s) => !s)}
           />
