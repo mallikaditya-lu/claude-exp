@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { PLAYER_PROVIDERS, hostname, resolveEmbed, videoThumb, withAutoplay } from '../../lib';
 import { useCanvas, type CardProps } from '../CanvasContext';
@@ -25,8 +25,27 @@ function Favicon({ url }: { url?: string }) {
 export function LinkCard({ item, selected, editing, update, setEditing }: CardProps) {
   const [draft, setDraft] = useState(item.url || '');
   const [error, setError] = useState('');
-  const embed = resolveEmbed(item.url);
+  const embed = resolveEmbed(item.resolvedUrl || item.url);
   const { play } = useCanvas();
+  // pin.it short links: the pin's own address is only known after the preview is fetched.
+  const shortPin = /^(www\.)?pin\.it$/.test(hostname(item.url));
+  // A click on a preview image opens it like the play button; a drag that starts there still moves the card.
+  const down = useRef<{ x: number; y: number } | null>(null);
+  const clickable = (open: () => void) => ({
+    onPointerDown: (e: React.PointerEvent) => { down.current = { x: e.clientX, y: e.clientY }; },
+    onClick: (e: React.MouseEvent) => {
+      const d = down.current;
+      if ((e.target as HTMLElement).closest('a, button')) return;
+      if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) open();
+    },
+  });
+
+  // pin.it cards from before short links were followed: look up where they lead, once.
+  useEffect(() => {
+    if (!shortPin || !item.unfurled || item.resolvedUrl || unfurling.has(`r-${item.id}`)) return;
+    unfurling.add(`r-${item.id}`);
+    api.unfurl(item.url!).then((m) => { if (m.url && m.url !== item.url) update({ resolvedUrl: m.url }, `unfurl-${item.id}`); }).catch(() => {});
+  }, [shortPin, item.unfurled, item.resolvedUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!item.url || item.unfurled || unfurling.has(item.id)) return;
@@ -38,6 +57,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
         description: m.description,
         thumb: m.image,
         siteName: m.siteName,
+        ...(m.url && m.url !== item.url ? { resolvedUrl: m.url } : {}),
       }, `unfurl-${item.id}`))
       .catch(() => update({ unfurled: true }, `unfurl-${item.id}`))
       .finally(() => unfurling.delete(item.id));
@@ -72,11 +92,15 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
 
   const note = <CardNote item={item} selected={selected} update={update} />;
 
-  // Posts on X: the usual preview card, but opening it shows the post (and plays its video)
-  // in the panel beside the board instead of a new tab.
-  if (embed?.kind === 'iframe' && embed.post && play) {
-    const title = item.title || 'Post on X';
-    const open = () => play({ title, provider: embed.provider, url: item.url, iframe: embed.src, post: true });
+  // Posts on X and Pinterest pins: the usual preview card, but opening it (title, image or play
+  // button) shows the post, and plays its video, in the panel beside the board instead of a new tab.
+  if (((embed?.kind === 'iframe' && embed.post) || shortPin) && play) {
+    const provider = embed?.provider || 'Pinterest';
+    const title = item.title || (provider === 'X' ? 'Post on X' : `Pin on ${provider}`);
+    const open = () => {
+      if (embed?.kind === 'iframe' && embed.post) play({ title, provider, url: item.url, iframe: embed.src, post: true });
+      else window.open(item.url, '_blank', 'noopener'); // a short link we couldn't follow
+    };
     const playBtn = (
       <button className="poster-play nodrag" title="Play here (opens beside the board)" onClick={open}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
@@ -85,7 +109,11 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
     return (
       <div className="link-card">
         {item.thumb && (
-          <div className="link-thumb is-playable">
+          <div
+            className="link-thumb is-playable"
+            title="Open beside the board"
+            {...clickable(open)}
+          >
             <img src={item.thumb} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
             {playBtn}
           </div>
@@ -96,7 +124,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
           <div className="link-meta">
             <Favicon url={item.url} />
             <div className="link-host grow">{item.siteName || hostname(item.url)}</div>
-            <a className="link-open nodrag" href={item.url} target="_blank" rel="noopener noreferrer" title="Open on X"><IconExternal size={14} /></a>
+            <a className="link-open nodrag" href={item.url} target="_blank" rel="noopener noreferrer" title={`Open on ${provider}`}><IconExternal size={14} /></a>
           </div>
         </div>
         {note}
@@ -108,16 +136,17 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
   if (embed?.kind === 'iframe' && PLAYER_PROVIDERS.includes(embed.provider) && play) {
     const poster = videoThumb(item.url) || item.thumb;
     const title = item.title || embed.provider;
+    const playIt = () => play({ title, provider: embed.provider, url: item.url, iframe: withAutoplay(embed.src), aspect: embed.aspect });
     return (
       <div className="link-card is-embed">
-        <div className="video-poster" style={{ aspectRatio: embed.aspect || 16 / 9 }}>
+        <div className="video-poster is-clickable" style={{ aspectRatio: embed.aspect || 16 / 9 }} {...clickable(playIt)}>
           {poster ? <img src={poster} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" /> : <div className="poster-blank" />}
           <div className="poster-shade" />
           <div className="poster-title">{title}</div>
           <button
             className="poster-play nodrag"
             title={`Play (opens beside the board)`}
-            onClick={() => play({ title, provider: embed.provider, url: item.url, iframe: withAutoplay(embed.src), aspect: embed.aspect })}
+            onClick={playIt}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
           </button>

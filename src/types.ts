@@ -46,6 +46,8 @@ export interface Item {
   /** Link cards: show only the title (the description stays as the title's tooltip). */
   hideDesc?: boolean;
   url?: string;
+  /** Where a short link (e.g. pin.it) leads, found when the preview was fetched. */
+  resolvedUrl?: string;
   thumb?: string;
   siteName?: string;
   unfurled?: boolean;
