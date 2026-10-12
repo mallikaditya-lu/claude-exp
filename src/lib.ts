@@ -243,6 +243,11 @@ export function resolveEmbed(raw?: string): Embed | null {
     const id = path.match(/^\/(?:\w+|i(?:\/web)?)\/status(?:es)?\/(\d+)/)?.[1];
     if (id) return { kind: 'iframe', src: `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`, height: 560, provider: 'X', post: true };
   }
+  // Pinterest pins: Pinterest's own pin embed (plays video pins).
+  if (/(^|\.)pinterest\.[a-z]{2,3}(\.[a-z]{2})?$/.test(u.hostname)) {
+    const id = path.match(/^\/pin\/(?:[^/]*--)?(\d+)/)?.[1];
+    if (id) return { kind: 'iframe', src: `https://assets.pinterest.com/ext/embed.html?id=${id}`, height: 620, provider: 'Pinterest', post: true };
+  }
   if (host === 'drive.google.com') {
     const fid = path.match(/\/file\/d\/([\w-]+)/)?.[1];
     if (fid) return { kind: 'iframe', src: `https://drive.google.com/file/d/${fid}/preview`, aspect: 16 / 9, provider: 'Google Drive' };
