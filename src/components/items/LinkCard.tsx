@@ -98,7 +98,7 @@ export function LinkCard({ item, selected, editing, update, setEditing }: CardPr
     const provider = embed?.provider || 'Pinterest';
     const title = item.title || (provider === 'X' ? 'Post on X' : `Pin on ${provider}`);
     const open = () => {
-      if (embed?.kind === 'iframe' && embed.post) play({ title, provider, url: item.url, iframe: embed.src, post: true });
+      if (embed?.kind === 'iframe' && embed.post) play({ title, provider, url: item.url, iframe: embed.src, post: true, postUrl: item.resolvedUrl || item.url, poster: item.thumb });
       else window.open(item.url, '_blank', 'noopener'); // a short link we couldn't follow
     };
     const playBtn = (

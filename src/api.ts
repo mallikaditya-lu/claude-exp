@@ -236,6 +236,7 @@ export const api = {
   importUrl: (url: string, boardId: string) =>
     req<{ media: false } | ({ media: true; sourceUrl: string } & UploadResult)>('/api/import-url', { method: 'POST', body: JSON.stringify({ url, boardId }) }),
   unfurl: (url: string) => req<LinkMeta>(`/api/unfurl?url=${encodeURIComponent(url)}`),
+  postVideo: (url: string) => req<{ video: string | null; gif?: boolean }>(`/api/post-video?url=${encodeURIComponent(url)}`),
   /**
    * Upload in chunks: small requests get past proxy size limits, and a dropped connection
    * only retries the chunk that failed.

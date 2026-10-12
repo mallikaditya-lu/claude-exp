@@ -20,6 +20,7 @@ import { Templates } from './templates.js';
 import { OAuth, validRedirect } from './oauth.js';
 import { createMcp } from './mcp.js';
 import { Agent } from './agent.js';
+import { postVideo } from './postvideo.js';
 import { MAX_CONTEXT_CHARS, contextMeta, contextText, fileKind } from './context.js';
 import { Thumbs } from './thumbs.js';
 
@@ -1423,6 +1424,15 @@ setTimeout(runBackup, 60 * 1000).unref();
 setInterval(runBackup, 6 * 3600 * 1000).unref(); // at most one file per day; re-checks every 6h
 
 // ---------- link previews ----------
+// The video file behind a post on X or a Pinterest pin, for the side player (null when there isn't one).
+app.get('/api/post-video', async (req, res) => {
+  try {
+    res.json(await postVideo(String(req.query.url || '')));
+  } catch {
+    res.json({ video: null });
+  }
+});
+
 app.get('/api/unfurl', async (req, res) => {
   if (req.user.visitor) return res.status(403).json({ error: 'Not available on shared links' });
   try {
