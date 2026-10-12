@@ -2,7 +2,12 @@ import { createContext, useContext, type ReactNode } from 'react';
 import type { BoardSummary, Item, Rect } from '../types';
 
 /** Something to watch in the side player. `post`: a social post (e.g. on X), shown full height rather than in a video frame. */
-export interface PlayMedia { title: string; provider: string; url?: string; iframe?: string; video?: string; aspect?: number; post?: boolean }
+export interface PlayMedia {
+  title: string; provider: string; url?: string; iframe?: string; video?: string; aspect?: number; post?: boolean;
+  /** Posts: the address to look up the post's own video file with (played instead of the embed when found). */
+  postUrl?: string;
+  poster?: string;
+}
 
 export interface CanvasCtx {
   me: string;

@@ -1259,3 +1259,7 @@ body.is-resizing iframe { pointer-events: none; }
 .ai-h3 { font-size: 13.5px; margin: 16px 0 0; }
 
 .link-thumb.is-playable, .video-poster.is-clickable { cursor: pointer; }
+.player-switch { background: rgba(255, 255, 255, 0.08); }
+.player-switch button { color: #bbc; }
+.player-switch button.is-on { background: rgba(255, 255, 255, 0.2); color: #fff; box-shadow: none; }
+.player-loading { flex: 1; display: grid; place-items: center; align-self: stretch; }
